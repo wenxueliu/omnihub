@@ -1050,5 +1050,7 @@ M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷
 重置、适配器边界测试、迁移指南与发布验收也已完成。剩余：
 
 - 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin、facebook、instagram、boss）先确认可用来源，再按平台目录迁移。
+  linkedin、facebook、instagram、boss）的来源确认结论见
+  `docs/migration.md` 第 5 节：全部依赖浏览器会话或 API Key，本机也缺少
+  `opencli` / `boss-agent-cli`，因此暂不迁移。
 - 已声明但未实现的 `mcp` / `browser` 适配器。

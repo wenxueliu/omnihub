@@ -139,3 +139,37 @@ python -m agent_reach.cli read "<url>" --platform <id> --text
       `cooldowns reset --platform <id>`）
 - [ ] 至少一个 search fixture 与一个 read fixture
 - [ ] 删除目录后其余平台的测试仍然通过
+
+## 5. 登录/浏览器依赖平台的来源确认（2026-10-25）
+
+这批平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin、facebook、
+instagram、boss）**暂不迁移**。原因不是 manifest 难写，而是可用来源都依赖
+浏览器登录会话或第三方 API Key；在本机缺少相应工具与凭据时声明它们，只会
+让 `doctor` 变 degraded、`check` 无法验收。
+
+来源调查结论（`reference/Agent-Reach/agent_reach/channels/`、
+`reference/union-search-skill/scripts/channels/`）：
+
+| 平台 | 旧动作 | 主要来源 | 登录/凭据 | 迁移结论 |
+|---|---|---|---|---|
+| twitter (X) | search, profile, tweets, thread | OpenCLI（专用浏览器会话）；search 有 Exa `site:x.com` 公共兜底 | 浏览器登录；experimental | 暂缓：公共 Exa 只适合搜索，正文/回复树需会话 |
+| xueqiu | quote, search(股票), hot_posts, hot_stocks | 腾讯公开行情；雪球 v4/v5 接口 | 行情免登录；热帖需 `xq_a_token` cookie | 暂缓：动作不是内容 search/read，需要新的 action 设计 |
+| xiaohongshu | search, read, comments | 仅 OpenCLI | 浏览器登录；read 需带 `xsec_token` 的完整链接 | 暂缓 |
+| xiaoyuzhou | 转写（Agent-Reach）/ 搜索（union-search） | Groq Whisper + ffmpeg；Metaso API | `GROQ_API_KEY` 或 `METASO_API_KEY` | 暂缓：动作是 transcribe / 外部搜索，不是本站 search/read |
+| linkedin | jobs, read | OpenCLI；公共职位页可经 Exa + Jina | 站内搜索需 `li_at` cookie | 暂缓；若要迁移先做“公共职位”子集并重新定义动作 |
+| facebook | search, profile | 仅 OpenCLI | 浏览器登录；experimental | 暂缓 |
+| instagram | search(用户), profile, posts | 仅 OpenCLI | 浏览器登录；无公共兜底 | 暂缓 |
+| boss | search, read | OpenCLI + boss-agent-cli（CDP 9222） | 浏览器登录；强风控/验证码 | 暂缓 |
+
+本机现状：没有 `opencli`，也没有 `boss-agent-cli`，因此即使现在声明这些平台
+也无法通过 live check。迁移前置条件：
+
+- 安装并配置对应工具（OpenCLI + 专用浏览器配置，或 boss-agent-cli + CDP）
+- 用户亲自完成站点登录，不把密码或 Cookie 交给本仓库
+- 用 `explain` 确认来源顺序，补真实 fixture，并让 `check --platform <id>`
+  的 search/read 至少各通过一次
+- 在 `docs/release.md` 记录实际 backend、登录方式与已知限制
+
+复用边界：只借来源顺序与错误分类思路。不要复制带凭据轮换、CDP 端口假设或
+provenance 不清晰的代码；第三方 API（Groq、Metaso）需要用户自备 Key，且要
+在 README 与 `THIRD_PARTY.md` 中写清配额与许可。
