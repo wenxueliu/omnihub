@@ -304,6 +304,44 @@ def test_youtube_read_returns_transcript_text():
     assert "event loop" in result["items"][0]["text"]
 
 
+def test_youtube_search_uses_exa_and_keeps_provenance():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("youtube", "search.json")))
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "asyncio tutorial", "limit": 2},
+        ctx=FakeCtx(),
+        platform="youtube",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "exa"
+    assert len(result["items"]) == 2
+    assert result["items"][0]["platform"] == "youtube"
+    assert result["items"][0]["url"].startswith("https://www.youtube.com/watch?")
+
+
+def test_bilibili_search_uses_exa_and_keeps_provenance():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("bilibili", "search.json")))
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "python 异步", "limit": 2},
+        ctx=FakeCtx(),
+        platform="bilibili",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "exa"
+    assert len(result["items"]) == 2
+    assert result["items"][0]["platform"] == "bilibili"
+    assert result["items"][0]["url"].startswith("https://www.bilibili.com/video/")
+
+
 def test_read_url_routes_reddit_and_youtube_before_web():
     registry = _registry()
     for url, expected in (

@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Title: Python 异步编程入门：从 asyncio 到事件循环\nURL: https://www.bilibili.com/video/BV1xx411c7mD\nPublished: 2024-03-02T00:00:00.000Z\nAuthor: 示例UP主\nHighlights:\n# Python 异步编程入门\n\n从协程、事件循环到并发任务，带你跑通第一个 asyncio 程序。\n\n---\n\nTitle: 30 分钟看懂 Python 异步\nURL: https://www.bilibili.com/video/BV1yy411c7mE\nPublished: 2023-11-10T00:00:00.000Z\nAuthor: another_uploader\nHighlights:\n# 30 分钟看懂 Python 异步\n\n用动画解释同步与异步的区别，以及 asyncio 的常见坑。"
+      }
+    ]
+  }
+}

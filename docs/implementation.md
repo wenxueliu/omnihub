@@ -929,7 +929,10 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   `loopback_http` 的真实 socket 路径、JSON 解析与 content type。
 - `Context` 的 429/403 覆盖 `Retry-After` 秒数与 HTTP 日期两种形式，
   并验证缺失时 `retry_after_seconds` 为 `None`。
-- **验收结果**：`python -m pytest -q` 241 项通过。
+- fixture 覆盖：`github`、`v2ex`、`bilibili`、`reddit`、`youtube` 均有
+  `search` / `read` 真实响应样本与契约用例（补齐 bilibili / youtube 的
+  Exa 搜索样本）。
+- **验收结果**：`python -m pytest -q` 243 项通过。
 
 ### M5 — 加固与发布
 

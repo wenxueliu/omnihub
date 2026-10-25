@@ -11,7 +11,7 @@
 
 ```bash
 python -m pytest -q
-# 241 passed
+# 243 passed
 ```
 
 覆盖：schema 与 manifest 契约、目录删除隔离、路由与聚合、模板与解析器、
