@@ -182,3 +182,75 @@ def test_http_403_with_rate_limit_headers_is_final(monkeypatch):
     with pytest.raises(ReachError) as info:
         Context().http("https://example.com/a")
     assert info.value.code == RATE_LIMITED
+
+
+def test_http_429_exposes_retry_after_seconds(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.core.context.requests.request",
+        lambda *args, **kwargs: FakeResponse(
+            429, headers={"Retry-After": "42"}, body=b"slow down"
+        ),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/a")
+    assert info.value.code == RATE_LIMITED
+    assert info.value.retry_after_seconds == 42
+
+
+def test_http_429_without_retry_after_has_no_hint(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.core.context.requests.request",
+        lambda *args, **kwargs: FakeResponse(429, body=b"slow down"),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/a")
+    assert info.value.retry_after_seconds is None
+
+
+def test_http_403_parses_an_http_date_retry_after(monkeypatch):
+    import datetime as dt
+    from email.utils import format_datetime
+
+    when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=120)
+    monkeypatch.setattr(
+        "agent_reach.core.context.requests.request",
+        lambda *args, **kwargs: FakeResponse(
+            403,
+            headers={"Retry-After": format_datetime(when, usegmt=True)},
+            body=b"blocked",
+        ),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/a")
+    assert 100 < info.value.retry_after_seconds <= 120
+
+
+def test_loopback_http_talks_to_a_real_local_server():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'{"running": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = Context().loopback_http(
+            f"http://127.0.0.1:{server.server_port}/status"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert result.data == {"running": True}
+    assert result.content_type == "application/json"

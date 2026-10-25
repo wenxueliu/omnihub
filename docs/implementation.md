@@ -921,6 +921,16 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   短冷却不缩短旧冷却、来源暂停隔离、平台回退、pacing、损坏文件、0600/0700
   权限与 symlink 拒写。
 
+**M5 适配器边界测试（2026-10-25）**
+
+- fake binary：在临时目录写可执行脚本，经 CLI 适配器验证 stdout JSON 解析、
+  返回码记录与登录墙错误映射。
+- 本地 fake HTTP server：`ThreadingHTTPServer` 随机端口，验证
+  `loopback_http` 的真实 socket 路径、JSON 解析与 content type。
+- `Context` 的 429/403 覆盖 `Retry-After` 秒数与 HTTP 日期两种形式，
+  并验证缺失时 `retry_after_seconds` 为 `None`。
+- **验收结果**：`python -m pytest -q` 241 项通过。
+
 ### M5 — 加固与发布
 
 **交付物**

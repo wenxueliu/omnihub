@@ -90,6 +90,37 @@ def test_cli_adapter_runs_process():
     assert result.meta["returncode"] == 0
 
 
+def _write_fake_binary(tmp_path: Path, body: str) -> Path:
+    binary = tmp_path / "bin" / "fake-tool"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/usr/bin/env python3\n" + body, encoding="utf-8")
+    binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+    return binary
+
+
+def test_cli_adapter_runs_a_fake_binary(tmp_path):
+    binary = _write_fake_binary(
+        tmp_path,
+        "import json, sys\nprint(json.dumps({'argv': sys.argv[1:]}))\n",
+    )
+    call = ToolCall(adapter="cli", argv=(str(binary), "hello", "world"))
+    result = CliAdapter().invoke(call, ctx=Context(timeout=5))
+    assert json.loads(result.text) == {"argv": ["hello", "world"]}
+    assert result.meta["returncode"] == 0
+
+
+def test_cli_adapter_maps_login_wall_from_a_fake_binary(tmp_path):
+    binary = _write_fake_binary(
+        tmp_path,
+        "import sys\nsys.stderr.write('please log in first')\nsys.exit(1)\n",
+    )
+    with pytest.raises(ReachError) as info:
+        CliAdapter().invoke(
+            ToolCall(adapter="cli", argv=(str(binary),)), ctx=Context(timeout=5)
+        )
+    assert info.value.code == NEED_LOGIN
+
+
 def test_cli_adapter_maps_rate_limit():
     ctx = Context(timeout=5)
     call = ToolCall(
