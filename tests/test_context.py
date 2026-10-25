@@ -97,6 +97,37 @@ def test_http_rejects_private_url_before_network():
     assert info.value.code == BAD_INPUT
 
 
+def test_loopback_http_rejects_public_hosts_and_credentials():
+    for url in (
+        "http://example.com/status",
+        "http://user:pass@127.0.0.1:10086/status",
+        "file:///tmp/socket",
+    ):
+        with pytest.raises(ReachError) as info:
+            Context().loopback_http(url)
+        assert info.value.code == BAD_INPUT
+
+
+def test_loopback_http_parses_json_and_maps_connection_failure(monkeypatch):
+    import requests
+
+    monkeypatch.setattr(
+        "agent_reach.core.context.requests.request",
+        lambda *args, **kwargs: FakeResponse(body=b'{"running": true}'),
+    )
+    result = Context().loopback_http("http://127.0.0.1:10086/status")
+    assert result.data == {"running": True}
+
+    def refused(*args, **kwargs):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr("agent_reach.core.context.requests.request", refused)
+    with pytest.raises(ReachError) as info:
+        Context(timeout=1).loopback_http("http://127.0.0.1:9/status", timeout=1)
+    assert info.value.code == NEED_SETUP
+    assert "local daemon" in info.value.message
+
+
 def test_http_drops_credentials_on_cross_origin_redirect(monkeypatch):
     seen = []
 

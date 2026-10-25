@@ -19,6 +19,8 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("REACH_PLUGIN_PATH", raising=False)
     monkeypatch.delenv("REACH_ROUTING", raising=False)
+    # Keep health probes away from a daemon the developer may have running.
+    monkeypatch.setenv("KIMI_WEBBRIDGE_ADDR", "127.0.0.1:1")
     return home
 
 

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agent_reach.adapters.base import RawResult
+from agent_reach.adapters.base import Health, RawResult
 from agent_reach.adapters.registry import build_adapters
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.registry import BUILTIN_PLATFORM_DIR, discover, load_platform
@@ -193,4 +193,53 @@ def test_web_read_falls_back_to_exa():
     )
     assert result["ok"] is True
     assert result["backend"] == "exa"
-    assert [attempt["result"] for attempt in result["meta"]["attempts"]] == ["ERROR", "OK"]
+    assert [attempt["result"] for attempt in result["meta"]["attempts"]] == [
+        "ERROR",
+        "SKIP",
+        "OK",
+    ]
+
+
+class HealthyDaemon:
+    kind = "daemon"
+
+    def __init__(self, data):
+        self.data = data
+        self.calls = []
+
+    def probe(self):
+        return Health(ok=True, detail="kimi-webbridge is running")
+
+    def invoke(self, call, *, ctx):
+        self.calls.append(call)
+        return RawResult(data=self.data, meta={})
+
+
+def test_web_read_uses_browser_when_jina_fails():
+    registry = discover()
+    ctx = FakeHttpCtx([RawResult(text="", content_type="text/plain")])
+    daemon = HealthyDaemon(
+        {
+            "url": "https://example.com/",
+            "title": "Browser title",
+            "text": "Rendered by the user's browser",
+            "truncated": False,
+        }
+    )
+    adapters = build_adapters()
+    adapters["daemon"] = daemon
+    result = run_action(
+        registry,
+        {"version": 1, "mode": "first_success"},
+        action="read",
+        params={"target": "https://example.com/"},
+        platform="web",
+        ctx=ctx,
+        adapters=adapters,
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "kimi-browser"
+    assert result["items"][0]["title"] == "Browser title"
+    assert result["items"][0]["text"] == "Rendered by the user's browser"
+    assert daemon.calls[0].call == "read"
+    assert daemon.calls[0].args["url"] == "https://example.com/"

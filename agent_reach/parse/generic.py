@@ -19,6 +19,7 @@ from typing import Any, Optional, Sequence
 import yaml
 
 from agent_reach.core.result import make_item
+from agent_reach.parse.daemon import daemon_page
 from agent_reach.parse.web import exa_read, exa_search, jina
 
 #: Parsers shared by several platforms. A platform-local ``parse.py`` handler
@@ -27,6 +28,7 @@ NAMED_PARSERS = {
     "exa_search": exa_search,
     "exa_read": exa_read,
     "jina": jina,
+    "daemon_page": daemon_page,
 }
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)

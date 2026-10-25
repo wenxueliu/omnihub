@@ -26,4 +26,5 @@ def test_all_builtin_manifests_validate():
                 assert not source.when or source.when.split(":", 1)[0] in {
                     "secret",
                     "tool",
+                    "adapter",
                 }

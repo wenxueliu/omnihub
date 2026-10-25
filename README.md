@@ -2,11 +2,12 @@
 
 配置驱动、按平台组织的 Agent 互联网访问层。
 
-当前完成 **M2**：M0 契约层（目录发现、manifest 校验、两级优先级路由）+
+当前完成 **M3**：M0 契约层（目录发现、manifest 校验、两级优先级路由）+
 M1 执行层（HTTP/CLI/OpenCLI 适配器、`web` 公共网页平台）+ M2 平台批次一
-（`github`、`v2ex`、`bilibili`）。CLI 已支持 `platforms`、`doctor`、
-`explain`、`search` 和 `read`。daemon（kimi-webbridge）、MCP、浏览器
-适配器、`--enrich` 与后续平台批次详见 `docs/implementation.md`。
+（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
+（kimi-webbridge `daemon` 适配器、`search --enrich N`）。CLI 已支持
+`platforms`、`doctor`、`explain`、`search` 和 `read`。MCP/浏览器适配器与
+后续平台批次详见 `docs/implementation.md`。
 
 ## 快速开始
 
@@ -24,6 +25,9 @@ python -m agent_reach.cli explain --url https://www.example.com/a --action read
 # 搜索与按需读取
 python -m agent_reach.cli search "yt-dlp github" --platform web --limit 3
 python -m agent_reach.cli read https://example.com --platform web
+
+# 搜索后自动补正文（失败隔离，失败项进 meta.enrich_errors）
+python -m agent_reach.cli search "example domain" --limit 3 --enrich 2
 
 # 站点平台
 python -m agent_reach.cli search "flask" --platform github --limit 3
@@ -44,11 +48,12 @@ pip install -e .
 reach-platforms platforms --text
 ```
 
-`web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取优先
-Jina Reader，失败后回退 Exa。它的默认优先级是 10，因此普通 `search`
-默认走公共网页；站点平台（`github` 100、`bilibili` 110、`v2ex` 120）通过
-`--platform`，或 routing 里自定义的 `intents` 使用。`read` 按 URL 域名先
-选站点平台，再自动把 `web` 作为最后一个来源。
+`web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
+尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
+默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
+100、`bilibili` 110、`v2ex` 120）通过 `--platform`，或 routing 里自定义
+的 `intents` 使用。`read` 按 URL 域名先选站点平台，再自动把 `web` 作为
+最后一个来源。
 
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
   `GITHUB_TOKEN` 或 `GH_TOKEN` 可提高限额并访问私有仓库。
@@ -73,13 +78,16 @@ agent_reach/
     router.py            # 显式平台 / URL / intent / priority
     schema/              # JSON Schema
     template.py          # ${param} / ${secret:NAME} / 过滤器模板
+    enrich.py            # search --enrich N：并发补正文、失败隔离
   adapters/
     base.py              # Adapter / ToolCall / RawResult 协议
     builtin.py           # 平台目录内可信 Python hooks
     http.py / cli.py / opencli.py
+    daemon.py            # kimi-webbridge：/status、session、cursor 分页
   parse/
     generic.py           # JSON / YAML / OpenCLI / text 解析链
     web.py               # 共享 Exa / Jina 解析器
+    daemon.py            # 浏览器读取结果 → 统一 item
   platforms/noop/        # 最小离线平台（契约测试/示例）
   platforms/web/         # Exa + Jina 公共网页平台
   platforms/github/      # GitHub 搜索、仓库/issue/PR 读取
@@ -121,10 +129,11 @@ actions:
 继续下一个来源；`NEED_LOGIN`、`RATE_LIMITED`、`PLATFORM_BLOCKED`、
 `BAD_INPUT` 等终态错误会立即停止。
 
-可选来源用 `when: secret:NAME` 或 `when: tool:NAME` 声明：条件不满足时
-记为 `SKIP`，不会让整个平台失败。平台的 `auth.secret` 表示“可选登录
-凭据”，缺失时 `doctor` 提示但仍使用公共来源；`requires.secrets` 则表示
-必需凭据。
+可选来源用 `when: secret:NAME`、`when: tool:NAME` 或
+`when: adapter:NAME` 声明：条件不满足时记为 `SKIP`，不会让整个平台失败。
+`adapter:daemon` 表示“该适配器的健康探针通过才运行”，例如 `web` 的
+kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭据”，缺失时
+`doctor` 提示但仍使用公共来源；`requires.secrets` 则表示必需凭据。
 
 ## 路由配置
 

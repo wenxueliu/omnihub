@@ -36,25 +36,55 @@ def _tool_rows(platform: PlatformManifest) -> list[dict]:
     return rows
 
 
-def _adapter_rows(platform: PlatformManifest, adapters: Mapping[str, Any]) -> list[dict]:
-    kinds = {str(kind) for kind in platform.requires.get("adapters") or ()}
+def _adapter_kinds(platform: PlatformManifest) -> tuple[set[str], set[str]]:
+    """All adapter kinds used, and the ones the platform cannot work without.
+
+    An adapter named in ``requires.adapters`` is required. So is one used by an
+    unguarded source. An adapter that only appears behind a ``when`` guard is
+    optional: the platform still works when that source is skipped.
+    """
+    required = {str(kind) for kind in platform.requires.get("adapters") or ()}
+    used: set[str] = set(required)
     for action in platform.actions.values():
         for source in action.sources:
-            kinds.add(source.adapter)
+            used.add(source.adapter)
+            if not source.when:
+                required.add(source.adapter)
+    return used, required
+
+
+def _adapter_rows(platform: PlatformManifest, adapters: Mapping[str, Any]) -> list[dict]:
+    kinds, required = _adapter_kinds(platform)
     rows = []
     for kind in sorted(kinds):
+        is_required = kind in required
         adapter = adapters.get(kind)
         if adapter is None:
-            rows.append({"kind": kind, "ok": False, "detail": "adapter not implemented"})
+            rows.append(
+                {
+                    "kind": kind,
+                    "required": is_required,
+                    "ok": False,
+                    "detail": "adapter not implemented",
+                }
+            )
             continue
         try:
             health = adapter.probe()
         except Exception as exc:  # a broken probe must not break the report
-            rows.append({"kind": kind, "ok": False, "detail": str(exc)[:300]})
+            rows.append(
+                {
+                    "kind": kind,
+                    "required": is_required,
+                    "ok": False,
+                    "detail": str(exc)[:300],
+                }
+            )
             continue
         rows.append(
             {
                 "kind": kind,
+                "required": is_required,
                 "ok": bool(health.ok),
                 "detail": health.detail,
                 "version": health.version,
@@ -144,10 +174,12 @@ def _platform_row(
 
     required_failures = [
         row for row in tools if row["required"] and not row["ok"]
-    ] + [row for row in adapter_rows if not row["ok"]] + [
+    ] + [row for row in adapter_rows if row["required"] and not row["ok"]] + [
         row for row in secrets if not row["ok"]
     ]
-    optional_failures = [row for row in tools if not row["required"] and not row["ok"]]
+    optional_failures = [
+        row for row in tools if not row["required"] and not row["ok"]
+    ] + [row for row in adapter_rows if not row["required"] and not row["ok"]]
     if required_failures:
         status = "error"
     elif optional_failures:

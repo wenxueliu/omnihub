@@ -44,6 +44,7 @@ from agent_reach.utils.process import utf8_subprocess_env
 _MAX_REDIRECTS = 5
 _SECRETS_FILE = ".agent-reach/secrets.yaml"
 _DEFAULT_USER_AGENT = "reach-platforms/0.1 (+https://github.com/)"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 class CommandFailed(ReachError):
@@ -339,6 +340,96 @@ class Context:
                     "url": current,
                     "status": status,
                     "bytes": len(raw_body),
+                    "truncated": truncated,
+                },
+            )
+
+    def loopback_http(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        headers: Optional[Mapping[str, str]] = None,
+        data: Any = None,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> RawResult:
+        """Talk to a local daemon on the loopback interface only.
+
+        ``http`` deliberately rejects every non-public address. A local tool
+        daemon is the one legitimate loopback target, so it gets a separate
+        entry point that validates the host just as strictly in the other
+        direction: loopback literals only, no credentials, no redirects.
+        """
+        parts = urlsplit(str(url))
+        scheme = (parts.scheme or "").lower()
+        try:
+            host = (parts.hostname or "").lower()
+            port = parts.port
+        except ValueError:
+            raise ReachError(BAD_INPUT, f"invalid daemon URL {str(url)!r}") from None
+        if (
+            scheme not in {"http", "https"}
+            or host not in _LOOPBACK_HOSTS
+            or parts.username
+            or parts.password
+        ):
+            raise ReachError(
+                BAD_INPUT, f"refusing non-loopback daemon URL {str(url)!r}"
+            )
+        seconds = clamp_timeout(timeout, default=self.timeout)
+        cap = clamp_max_bytes(max_bytes, default=self.max_bytes)
+        request_headers = {"User-Agent": self.user_agent}
+        request_headers.update({str(key): str(value) for key, value in (headers or {}).items()})
+
+        try:
+            response = requests.request(
+                str(method or "GET").upper(),
+                str(url),
+                headers=request_headers,
+                data=data,
+                timeout=seconds,
+                allow_redirects=False,
+            )
+        except requests.Timeout:
+            raise ReachError(
+                TIMEOUT, f"local daemon at {host}:{port or 80} did not answer within {seconds:g}s"
+            ) from None
+        except requests.RequestException as exc:
+            raise ReachError(
+                NEED_SETUP,
+                f"cannot reach the local daemon at {host}:{port or 80}: {exc}",
+            ) from None
+
+        with response:
+            status = response.status_code
+            if 300 <= status < 400:
+                raise ReachError(
+                    UPSTREAM_BROKEN, f"local daemon answered HTTP {status} with a redirect"
+                )
+            body, truncated = self._read(response, cap, strict=False)
+            text = body.decode("utf-8", errors="replace")
+            if status >= 400:
+                snippet = text.strip()[:300]
+                if status == 404:
+                    raise ReachError(NOT_FOUND, f"local daemon HTTP 404: {snippet or 'not found'}")
+                raise ReachError(UPSTREAM_BROKEN, f"local daemon HTTP {status}: {snippet}")
+            content_type = response.headers.get("Content-Type", "")
+            parsed: Any = None
+            if "json" in content_type.lower() or text.lstrip().startswith(("{", "[")):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = None
+            return RawResult(
+                ok=True,
+                data=parsed,
+                text=text,
+                content_type=content_type,
+                meta={
+                    "url": str(url),
+                    "status": status,
+                    "bytes": len(body),
                     "truncated": truncated,
                 },
             )

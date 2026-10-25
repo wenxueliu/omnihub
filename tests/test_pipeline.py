@@ -558,6 +558,47 @@ def test_source_when_tool_skips_missing_executable(make_platform, tmp_path):
     assert result["meta"]["attempts"][0]["result"] == "SKIP"
 
 
+def test_source_when_adapter_skips_an_unhealthy_adapter(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "actions": _search_action(
+                    [
+                        {"adapter": "daemon", "call": "read", "when": "adapter:daemon"},
+                        _source("ok", priority=20),
+                    ]
+                )
+            }
+        },
+    )
+
+    class UnhealthyDaemon:
+        kind = "daemon"
+
+        def probe(self):
+            return Health(ok=False, detail="kimi-webbridge is not running")
+
+        def invoke(self, call, *, ctx):
+            raise AssertionError("a skipped source must not be invoked")
+
+    adapter = FakeAdapter({"ok": [{"title": "ok"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter, "daemon": UnhealthyDaemon()},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "ok"
+    attempts = result["meta"]["attempts"]
+    assert attempts[0]["result"] == "SKIP"
+    assert "not running" in attempts[0]["reason"]
+
+
 def test_source_when_rejects_unknown_condition(make_platform, tmp_path):
     registry = _registry(
         make_platform,

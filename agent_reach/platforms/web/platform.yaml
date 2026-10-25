@@ -6,6 +6,9 @@ priority: 10
 domains: []
 public_web: true
 
+requires:
+  adapters: [http]
+
 actions:
   search:
     params:
@@ -58,6 +61,18 @@ actions:
           - jina
         priority: 10
         timeout: 30
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: read
+        args:
+          url: "${target}"
+          max_chars: 20000
+          group_title: "reach: web read"
+        parse:
+          - daemon_page
+        priority: 20
+        timeout: 45
       - adapter: http
         name: exa
         method: POST
@@ -77,5 +92,5 @@ actions:
               maxCharacters: 20000
         parse:
           - exa_read
-        priority: 20
+        priority: 30
         timeout: 30

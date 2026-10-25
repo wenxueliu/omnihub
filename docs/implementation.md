@@ -643,6 +643,15 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 | `core/template.py` 过滤器 | 新实现 | `urlencode` / `lower` / `upper` / `strip`；查询值安全入 URL |
 | `agent_reach/parse/web.py` | M1 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
 
+### 已落地（M3）
+
+| 目标 | 来源 | 处理 |
+|---|---|---|
+| `adapters/daemon.py` | `~/.claude/skills/kimi-webbridge/SKILL.md` 协议说明 | 按外部契约实现；不复用 `kimi_search.py`（那是 Moonshot 直连 API） |
+| `core/context.py::loopback_http` | 新实现 | 与公开 `http` 分离的 loopback 专用入口；地址、路径、凭据、重定向全部收紧 |
+| `core/enrich.py` | 新实现 | 并发上限、失败隔离、URL 复检；不改 envelope 顶层语义 |
+| source `when: adapter:NAME` | 新实现 | 复用适配器 `probe()`；探针异常按 SKIP 处理 |
+
 ### M2 复用候选
 
 | 目标 | 来源 | 必要改造 |
@@ -780,17 +789,46 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 
 ### M3 — 有状态工具与按需抓取
 
+**状态：已完成（2026-10-25）**。`python -m pytest -q` 182 项通过；
+kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源均已
+用真实网络/真实 daemon 验收。
+
 **交付物**
 
-- `adapters/daemon.py`：kimi-webbridge（健康检查、session、cursor、分页）
-- `--enrich N`：并发抓取、失败隔离、URL 复检
-- `platforms/web` 或相关平台接入 kimi 作为来源
+- `adapters/daemon.py`：kimi-webbridge（`/status` 健康检查、session、
+  cursor 分页、错误码映射）
+- `core/context.py::loopback_http`：唯一允许 loopback 的传输入口，只接受
+  `127.0.0.1` / `::1` / `localhost`，无凭据、无重定向
+- `core/enrich.py` + `search --enrich N`：并发读取、失败隔离、URL 复检
+- `parse/daemon.py`：把浏览器读取结果转成统一 item
+- `platforms/web` read 来源链改为 `jina → kimi-browser → exa`，kimi 用
+  `when: adapter:daemon` 保护；缺失时记为 `SKIP`
+- source `when` 新增 `adapter:NAME`（适配器健康探针通过才运行）
+- `doctor` 区分必需/可选适配器；只在 `when` 后出现的适配器不会把平台标成
+  error
 
-**验收**
+**实现要点**
 
-- daemon 未启动 / 扩展未连接时返回明确错误码。
-- `snapshot` 分页能取完或按 `max_chars` 截断。
-- `--enrich 3` 在部分失败时仍返回搜索结果。
+- 地址来自 `KIMI_WEBBRIDGE_ADDR`、`~/.kimi-webbridge/daemon.addr` 或
+  `config.json`，默认 `127.0.0.1:10086`；非 loopback 地址被拒绝。
+- `read` 组合动作：`navigate` 后按 `aria` 快照读取，跟随 `next_cursor`
+  直到字符预算、页数上限或 cursor 过期；过期时返回
+  `truncated_reason: cursor_expired`，不把整次读取判为失败。
+- `extension_not_connected` → `NEED_SETUP`；`busy` → `BUSY`；
+  `timeout` → `TIMEOUT`；未配置扩展时 `web` 继续回退 Exa。
+- `--enrich` 只处理 `text` 为空或短于 200 字符的结果，默认并发 3；失败
+  写入 `meta.enrich_errors`，搜索结果仍然返回。
+
+**验收结果**
+
+- `doctor --text` 报告 `web` 的 `daemon` 适配器为 ok（真实 daemon
+  `v2.0.23`，扩展已连接），其余平台无 error/degraded。
+- `DaemonAdapter` 真实读取 `https://example.com/`：标题 `Example Domain`，
+  983 字符；`max_chars=300` 时按预算截断并标记 `max_chars`。
+- `search "example domain" --enrich 1` 返回 2 条结果，其中 1 条被补正文，
+  `meta.enriched = 1`、`meta.enrich_errors = []`。
+- 单元测试覆盖：daemon 未启动、扩展未连接、非法/远程地址、cursor 过期、
+  预算截断、URL 复检、单条 enrich 失败隔离。
 
 ### M4 — 全量迁移与插件
 

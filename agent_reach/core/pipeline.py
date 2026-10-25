@@ -265,11 +265,14 @@ def _attempt(
     return entry
 
 
-def _skip_reason(source: Source, ctx: Any) -> Optional[str]:
+def _skip_reason(
+    source: Source, ctx: Any, adapters: Mapping[str, Any]
+) -> Optional[str]:
     """Evaluate a source ``when`` condition.
 
-    Supported forms: ``secret:NAME`` (environment or secrets file) and
-    ``tool:NAME`` (executable on PATH). An empty condition always runs.
+    Supported forms: ``secret:NAME`` (environment or secrets file),
+    ``tool:NAME`` (executable on PATH) and ``adapter:NAME`` (the adapter's
+    health probe passes). An empty condition always runs.
     """
     condition = (source.when or "").strip()
     if not condition:
@@ -283,9 +286,19 @@ def _skip_reason(source: Source, ctx: Any) -> Optional[str]:
         return None if ctx.secret(name) else f"secret {name!r} is not configured"
     if kind == "tool":
         return None if shutil.which(name) else f"tool {name!r} is not installed"
+    if kind == "adapter":
+        adapter = adapters.get(name)
+        if adapter is None:
+            return f"adapter {name!r} is not implemented"
+        try:
+            health = adapter.probe()
+        except Exception as exc:  # a broken probe means "skip", not "fail the platform"
+            return f"adapter {name!r} probe failed: {exc}"
+        return None if health.ok else (health.detail or f"adapter {name!r} is not available")
     raise ReachError(
         NEED_SETUP,
-        f"unsupported when condition {condition!r} (use secret:NAME or tool:NAME)",
+        f"unsupported when condition {condition!r} "
+        "(use secret:NAME, tool:NAME or adapter:NAME)",
     )
 
 
@@ -324,7 +337,7 @@ def _try_platform(
     for source in sources:
         started = time.monotonic()
         try:
-            skip = _skip_reason(source, ctx)
+            skip = _skip_reason(source, ctx, adapters)
             if skip:
                 last_error = ReachError(NEED_SETUP, skip)
                 attempts.append(_attempt(platform, source, "SKIP", started, reason=skip))

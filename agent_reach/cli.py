@@ -13,6 +13,7 @@ from agent_reach.adapters.registry import build_adapters
 from agent_reach.core.config import ConfigError, load_routing
 from agent_reach.core.context import Context
 from agent_reach.core.doctor import build_doctor_report
+from agent_reach.core.enrich import enrich_items
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.registry import Registry, discover
 from agent_reach.core.result import BAD_INPUT, ReachError, envelope
@@ -91,7 +92,10 @@ def _doctor_text(payload: dict) -> None:
             label = "required" if tool.get("required") else "optional"
             print(f"  tool {tool['name']:<14} {label:<8} {tool.get('detail') or ''}")
         for adapter in platform.get("adapters") or []:
-            state = "ok" if adapter.get("ok") else "missing"
+            if adapter.get("ok"):
+                state = "ok"
+            else:
+                state = "missing" if adapter.get("required", True) else "optional"
             detail = adapter.get("detail") or ""
             print(f"  adapter {adapter['kind']:<11} {state:<8} {detail}")
         for secret in platform.get("secrets") or []:
@@ -241,6 +245,14 @@ def _result_text(payload: dict) -> None:
             else:
                 print(" ".join(str(text).split())[:400])
         print()
+    meta = payload.get("meta") or {}
+    if meta.get("enriched"):
+        print(f"enriched {meta['enriched']} result(s)", file=sys.stderr)
+    for entry in meta.get("enrich_errors") or []:
+        print(
+            f"  enrich {entry.get('url')}: {entry.get('code')} {entry.get('message')}",
+            file=sys.stderr,
+        )
 
 
 def _action_error(
@@ -330,6 +342,20 @@ def _cmd_search(args: argparse.Namespace) -> int:
         intent=args.intent,
         mode=args.mode,
     )
+    if args.enrich:
+        payload = enrich_items(
+            payload,
+            limit=args.enrich,
+            read_one=lambda target: run_action(
+                registry,
+                routing,
+                action="read",
+                params={"target": target},
+                ctx=context,
+                url=target,
+                mode="first_success",
+            ),
+        )
     _emit(payload, text=args.text, render_text=_result_text)
     return _exit_code(payload)
 
@@ -443,6 +469,13 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query", help="Search query.")
     search.add_argument(
         "--limit", type=int, help="Maximum results per platform (platform default otherwise)."
+    )
+    search.add_argument(
+        "--enrich",
+        type=int,
+        metavar="N",
+        help="Read the first N results that only have a short snippet; "
+        "failures are reported in meta.enrich_errors.",
     )
     _add_action_args(search, search=True)
     search.set_defaults(func=_cmd_search)

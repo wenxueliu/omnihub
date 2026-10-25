@@ -121,6 +121,7 @@ def test_doctor_reports_missing_adapter(make_platform, tmp_path):
     assert row["status"] == "error"
     assert row["adapters"][0] == {
         "kind": "cli",
+        "required": True,
         "ok": False,
         "detail": "adapter not implemented",
     }
