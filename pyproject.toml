@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnihub"
-version = "0.1.0"
+version = "0.1.1"
 description = "Config-driven, platform-centric internet access for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"

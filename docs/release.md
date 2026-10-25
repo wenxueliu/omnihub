@@ -1,4 +1,36 @@
-# 0.1.0 发布验收
+# 发布记录
+
+## 0.1.1（2026-10-26）
+
+- **版本**：`0.1.1`（`pyproject.toml`、`omnihub.__version__`）
+- **范围**：`web` 搜索新增 Bing 与 Google 两个后端。默认行为不变：`auto`
+  仍先走 Exa，失败后才尝试 Bing、Google。
+
+### 变更
+
+| 位置 | 变更 |
+|---|---|
+| `platforms/web/platform.yaml` | `search` 新增 `engine` 参数（`auto` / `exa` / `bing` / `google`，默认 `auto`）；新增 `bing` 来源（http + Jina Reader，priority 20）与 `google` 来源（daemon 浏览器，priority 30，`when: adapter:daemon`） |
+| `platforms/web/scripts/search_google.js` | 在登录态浏览器里从 Google 结果页 DOM 提取标题/链接/摘要；风控页与同意页返回 blocked 标记 |
+| `omnihub/parse/web.py` | 新增 `bing_search`：解析 Jina 转出的 Markdown 结果，解开 `bing.com/ck/a` 的 base64 跳转得到真实 URL；验证码页映射 `PLATFORM_BLOCKED`，无法识别的输出映射 `UPSTREAM_BROKEN` |
+| `omnihub/core/pipeline.py` | `when` 支持逗号分隔的 AND 条件，以及 `param:NAME=VALUE`（`|` 分隔可选项、裸 `param:NAME` 判断真值） |
+| `omnihub/cli.py` | `search` 新增 `--engine auto|exa|bing|google` |
+
+### 验收
+
+- **离线**：`python -m pytest -q` → 456 passed。
+- **真实网络**（2026-10-26，kimi-webbridge 在线）：
+  - `search "python asyncio" --platform web --engine bing --limit 3` →
+    Bing 结果（docs.python.org / realpython / geeksforgeeks）。
+  - `--engine google` → Google 结果。
+  - 默认 `auto` 与 `--engine exa` → 与 0.1.0 一致，均走 Exa。
+  - `explain --platform web --action search` → 10 exa / 20 bing / 30 google，
+    `when` 与预期一致。
+- **限制**：Bing 直连 HTML 与 RSS 在当前出口 IP 下不可靠，因此经 Jina
+  Reader 访问；Google 必须真实浏览器，daemon 不可用时该来源被
+  `when: adapter:daemon` 跳过（不报错）。
+
+## 0.1.0（2026-10-25）
 
 - **日期**：2026-10-25
 - **版本**：`0.1.0`（`pyproject.toml`）
@@ -7,7 +39,7 @@
   与统一限流冷却、登录态平台批次三（daemon `browse`）、知乎平台（2026-10-26）。
 - **环境**：Linux 6.8，Python 3.12.3；真实网络可用。
 
-## 1. 离线验收
+### 1. 离线验收
 
 ```bash
 python -m pytest -q
@@ -35,7 +67,7 @@ cooling/failed 区分、插件信任、冷却账本（查询 / 清除 / pacing�
 | `browse` 目标 URL 复检私有地址（浏览器内重定向不在本层复检） | 通过 |
 | 冷却账本目录 0700、文件 0600、拒绝 symlink 写入 | 通过 |
 
-## 2. 静态体检
+### 2. 静态体检
 
 ```bash
 python -m omnihub.cli doctor --text
@@ -69,7 +101,7 @@ Jina），以及 `wechat` 的文章读取依赖它；daemon 未运行时这些
 本机未安装，因此 `doctor` 显示 `degraded`，来源被 `when: tool:notebooklm`
 跳过。`deepwiki` 只走公开 HTTP MCP 端点，不需要登录或凭据。
 
-## 3. 真实网络验收
+### 3. 真实网络验收
 
 ```bash
 python -m omnihub.cli check --timeout 90 --text
@@ -115,7 +147,7 @@ python -m omnihub.cli check --timeout 90 --text
 多数检查耗时 0.1–3s；雪球页面不触发 `load`，导航固定等待约 30s，因此
 `xueqiu` 两项各约 30s。`wechat` 搜索走 Exa，约 0.8s。
 
-## 4. 功能验收
+### 4. 功能验收
 
 - **平台可删除**：删除任一平台目录后 registry 仍加载，其余平台与
   `skill` / `check` 列表同步变化（测试覆盖）。
@@ -132,7 +164,7 @@ python -m omnihub.cli check --timeout 90 --text
 - **输出**：`schema_version: 1` envelope；`error.retry_after_seconds` 仅在
   已知时出现；退出码 0 / 1 / 2。
 
-## 5. 已知限制
+### 5. 已知限制
 
 - facebook、instagram、boss 明确不在当前范围，未提供平台目录。
 - `browse` 会在用户的真实浏览器里执行平台 manifest 提供的 JavaScript，

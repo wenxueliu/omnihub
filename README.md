@@ -373,7 +373,7 @@ loopback/私网地址的公网域名，重定向后同样复检。凭据通过 `
 
 - [`docs/implementation.md`](docs/implementation.md) — 完整设计、契约、迁移计划
 - [`docs/migration.md`](docs/migration.md) — 从旧 channel 迁移、新增/删除平台
-- [`docs/release.md`](docs/release.md) — 0.1.0 发布验收记录与已知限制
+- [`docs/release.md`](docs/release.md) — 发布记录（0.1.1 / 0.1.0）与已知限制
 - [`THIRD_PARTY.md`](THIRD_PARTY.md) — 复用代码与许可
 
 ## License
