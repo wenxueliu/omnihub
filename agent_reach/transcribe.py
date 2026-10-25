@@ -55,7 +55,8 @@ PROBE_TIMEOUT = 60.0
 FFMPEG_TIMEOUT = 300.0
 POLISH_TIMEOUT = 180.0
 POLISH_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
-POLISH_MODEL = "llama-3.3-70b-versatile"
+POLISH_MODEL = "openai/gpt-oss-120b"
+POLISH_FALLBACK_MODELS = ("qwen/qwen3.8-27b",)
 POLISH_MAX_DEPTH = 3
 USER_AGENT = "reach-platforms/0.1 (+https://github.com/)"
 _MAX_REDIRECTS = 5
@@ -213,9 +214,17 @@ def transcribe_chunk(
 # ---------------------------------------------------------------------------
 
 
-def _polish_once(text: str, key: str) -> tuple[str, Optional[str]]:
+class _ModelUnavailable(Exception):
+    """The requested polish model was retired or is not enabled for this key."""
+
+    def __init__(self, error: ReachError) -> None:
+        super().__init__(error.message)
+        self.error = error
+
+
+def _polish_request(model: str, text: str, key: str) -> tuple[str, Optional[str]]:
     body = {
-        "model": POLISH_MODEL,
+        "model": model,
         "temperature": 0.2,
         "max_completion_tokens": 8192,
         "messages": [
@@ -244,6 +253,10 @@ def _polish_once(text: str, key: str) -> tuple[str, Optional[str]]:
             "polish: rate limited",
             retry_after_seconds=_retry_after(response),
         )
+    if response.status_code == 404:
+        raise _ModelUnavailable(
+            ReachError(UPSTREAM_BROKEN, f"polish: model {model} is unavailable")
+        )
     if not response.ok:
         raise ReachError(
             UPSTREAM_BROKEN,
@@ -259,6 +272,17 @@ def _polish_once(text: str, key: str) -> tuple[str, Optional[str]]:
     except (ValueError, KeyError, IndexError, TypeError):
         raise ReachError(UPSTREAM_BROKEN, "polish returned an unexpected payload") from None
     return content, finish_reason
+
+
+def _polish_once(text: str, key: str) -> tuple[str, Optional[str]]:
+    """Try the preferred model, then the fallbacks, on retirement (HTTP 404)."""
+    failure: Optional[ReachError] = None
+    for model in (POLISH_MODEL, *POLISH_FALLBACK_MODELS):
+        try:
+            return _polish_request(model, text, key)
+        except _ModelUnavailable as exc:
+            failure = exc.error
+    raise failure or ReachError(UPSTREAM_BROKEN, "polish: no model available")
 
 
 def polish_text(text: str, key: str) -> tuple[str, Optional[str]]:

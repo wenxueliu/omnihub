@@ -382,6 +382,43 @@ def test_transcribe_audio_polishes_with_groq(
     assert result["polish_error"] is None
 
 
+def test_polish_once_falls_back_when_the_model_is_retired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    models: list[str] = []
+
+    def post(url: str, **kwargs: Any) -> FakeResponse:  # noqa: ARG001
+        models.append(kwargs["json"]["model"])
+        if len(models) == 1:
+            return FakeResponse(404, text='{"error":{"code":"model_not_found"}}')
+        payload = {
+            "choices": [
+                {"message": {"content": "你好。"}, "finish_reason": "stop"}
+            ]
+        }
+        return FakeResponse(200, text=json.dumps(payload))
+
+    monkeypatch.setattr(tr.requests, "post", post)
+    content, finish = tr._polish_once("你好", "k")
+
+    assert content == "你好。"
+    assert finish == "stop"
+    assert models == [tr.POLISH_MODEL, *tr.POLISH_FALLBACK_MODELS]
+
+
+def test_polish_once_reports_error_when_every_model_is_retired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tr.requests, "post", lambda *args, **kwargs: FakeResponse(404, text="{}")
+    )
+
+    with pytest.raises(ReachError) as excinfo:
+        tr._polish_once("你好", "k")
+
+    assert "unavailable" in excinfo.value.message
+
+
 def test_transcribe_audio_keeps_raw_text_when_polish_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
