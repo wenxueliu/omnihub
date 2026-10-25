@@ -934,6 +934,21 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   Exa 搜索样本）。
 - **验收结果**：`python -m pytest -q` 243 项通过。
 
+**M5 冷却可见性与重置（2026-10-25）**
+
+- `RateLimits.active()` 列出未过期的平台冷却与来源暂停（scope、platform、
+  source、code、剩余秒数），按剩余时间倒序；`RateLimits.clear(platform)`
+  删除匹配条目，可只清一个平台，返回清除数量；pacing 时间戳不受影响。
+- `doctor` 接受可选 `rate_limits`：每个平台行新增 `cooldowns`，`meta` 新增
+  `cooling_count`，`--text` 输出 `cooling <scope>`；冷却属于临时状态，不改变
+  平台 `status` 或 `ok`。
+- 新命令 `cooldowns [list|reset] [--platform ID]...`：默认列出账本；`reset`
+  清除全部或指定平台，输出 `meta.cleared` 与清除后仍生效的条目；未知平台
+  以 `BAD_INPUT` 退出 2。重置是显式操作，不会自动绕过限流。
+- **验收结果**：`python -m pytest -q` 253 项通过；覆盖 active 排序与过期
+  过滤、按平台/全部清除、pacing 保留、空账本不落盘、CLI list/reset 与未知
+  平台、doctor 冷却展示。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -960,7 +975,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 解析器 | fixture 输入 → 期望 Item；每个来源至少一个样本 |
 | 适配器 | fake 命令 / 本地 HTTP server；超时、非零退出、超大输出、YAML 错误 |
 | 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
-| 限流 | 注入时钟/路径；冷却合并、来源隔离、平台回退、pacing、损坏文件与权限 |
+| 限流 | 注入时钟/路径；冷却合并、来源隔离、平台回退、pacing、active/clear、损坏文件与权限 |
 | 删除 | 删除平台目录后 registry 仍可加载 |
 | live | 显式开启；`agent-reach check --platform <id>`（`--dry-run` 离线列出计划） |
 
@@ -1016,10 +1031,11 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 ## 18. 下一步
 
-M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却也已完成。剩余：
+M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷却可见性与
+重置、适配器边界测试、迁移指南与发布验收也已完成。剩余：
 
-- 迁移指南与发布验收已写入 `docs/migration.md` 与 `docs/release.md`。
 - 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
   linkedin、facebook、instagram、boss）先确认可用来源，再按平台目录迁移。
-- 适配器测试补齐 fake binary / 本地 fake HTTP server 的边界用例。
 - 已声明但未实现的 `mcp` / `browser` 适配器。
+- 可选：把 `active()` 的冷却信息并入 `check` 输出，便于 CI 直接看到
+  “因冷却跳过”与“真实失败”的区别。

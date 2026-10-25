@@ -17,6 +17,7 @@ from agent_reach.core.doctor import build_doctor_report
 from agent_reach.core.enrich import enrich_items
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.plugins import inspect_roots
+from agent_reach.core.ratelimit import RateLimits
 from agent_reach.core.registry import Registry, default_trusted_plugins, discover
 from agent_reach.core.result import BAD_INPUT, ReachError, envelope
 from agent_reach.core.router import RoutingError, build_plan
@@ -117,6 +118,16 @@ def _doctor_text(payload: dict) -> None:
         if auth.get("detail") and auth.get("detail") != "no login required":
             state = {True: "ok", False: "failed", None: "unknown"}[auth.get("ok")]
             print(f"  auth {'':<17} {state:<8} {auth.get('detail') or ''}")
+        for cooldown in platform.get("cooldowns") or []:
+            target = (
+                cooldown.get("source")
+                if cooldown.get("scope") == "source"
+                else "platform"
+            )
+            print(
+                f"  cooling {target:<14} {cooldown['retry_after_seconds']:.0f}s "
+                f"left ({cooldown.get('code')})"
+            )
     for error in payload.get("errors", []):
         print(f"invalid: {error['path']}: {error['message']}", file=sys.stderr)
     meta = payload.get("meta") or {}
@@ -142,6 +153,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         registry,
         ctx=context,
         adapters=build_adapters(context=context),
+        rate_limits=RateLimits(),
     )
     _emit(report, text=args.text, render_text=_doctor_text)
     return 0 if report["ok"] else 1
@@ -508,6 +520,62 @@ def _cmd_check(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _cooldowns_text(payload: dict) -> None:
+    for row in payload.get("cooldowns") or []:
+        target = row.get("source") if row.get("scope") == "source" else "platform"
+        print(
+            f"{row['platform']:<20} {row.get('scope'):<8} {target:<14} "
+            f"{row['retry_after_seconds']:>7.0f}s left {row.get('code')}"
+        )
+    meta = payload.get("meta") or {}
+    if "cleared" in meta:
+        print(f"cleared {meta['cleared']} entr(y/ies)", file=sys.stderr)
+    print(f"{meta.get('count', 0)} active cooldown(s)", file=sys.stderr)
+
+
+def _cmd_cooldowns(args: argparse.Namespace) -> int:
+    limiter = RateLimits()
+    platforms = list(args.platform or ())
+    if platforms:
+        registry = _discover(args)
+        for platform_id in platforms:
+            if platform_id not in registry.platforms:
+                _emit(
+                    _error_payload(
+                        BAD_INPUT,
+                        f"unknown platform {platform_id!r}",
+                        hint="Run `reach-platforms platforms` for the available ids.",
+                    ),
+                    text=args.text,
+                    render_text=_cooldowns_text,
+                )
+                return 2
+    selected = set(platforms)
+    cleared: Optional[int] = None
+    if args.action == "reset":
+        cleared = (
+            sum(limiter.clear(platform_id) for platform_id in platforms)
+            if platforms
+            else limiter.clear()
+        )
+    rows = [
+        row for row in limiter.active() if not selected or row["platform"] in selected
+    ]
+    meta: dict[str, Any] = {"count": len(rows), "platforms": sorted(selected)}
+    if cleared is not None:
+        meta["cleared"] = cleared
+    payload = {
+        "schema_version": 1,
+        "ok": True,
+        "command": f"cooldowns {args.action}",
+        "cooldowns": rows,
+        "meta": meta,
+        "error": None,
+    }
+    _emit(payload, text=args.text, render_text=_cooldowns_text)
+    return 0
+
+
 def _result_text(payload: dict) -> None:
     if not payload.get("ok"):
         error = payload.get("error") or {}
@@ -779,6 +847,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--text", action="store_true", help="Human-readable report instead of JSON."
     )
     check.set_defaults(func=_cmd_check)
+
+    cooldowns = subparsers.add_parser(
+        "cooldowns",
+        help="List or clear the local rate-limit ledger.",
+        description="Cooldowns pause a platform or source before any network "
+        "call. `reset` clears them, for example after an upstream limit or "
+        "outage was fixed.",
+    )
+    _add_discovery_args(cooldowns)
+    cooldowns.add_argument(
+        "action",
+        nargs="?",
+        choices=("list", "reset"),
+        default="list",
+        help="list active cooldowns (default) or reset them.",
+    )
+    cooldowns.add_argument(
+        "--platform",
+        action="append",
+        metavar="ID",
+        help="Only this platform (repeatable).",
+    )
+    cooldowns.add_argument(
+        "--text", action="store_true", help="Human-readable output instead of JSON."
+    )
+    cooldowns.set_defaults(func=_cmd_cooldowns)
 
     explain = subparsers.add_parser(
         "explain", help="Show which platforms a request would use."

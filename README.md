@@ -8,8 +8,8 @@ M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按
 （kimi-webbridge `daemon` 适配器、`search --enrich N`）+ M4 插件校验与
 信任、`explain` 来源明细、`SKILL.md` 生成、平台批次二（`reddit`、
 `youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却。CLI 已支持
-`platforms`、`doctor`、`explain`、`plugin`、`skill`、`check`、`search` 和
-`read`。剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
+`platforms`、`doctor`、`explain`、`plugin`、`skill`、`check`、`cooldowns`、`search`
+和 `read`。剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
 
 ## 快速开始
 
@@ -50,6 +50,10 @@ python -m agent_reach.cli doctor --text
 python -m agent_reach.cli check --dry-run --text
 python -m agent_reach.cli check --platform github --platform reddit --text
 
+# 查看 / 清除本地冷却账本（显式操作，不会自动绕过限流）
+python -m agent_reach.cli cooldowns --text
+python -m agent_reach.cli cooldowns reset --platform github --text
+
 # 第三方插件：只校验、不执行；生成给 Agent 用的 SKILL.md
 python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
 python -m agent_reach.cli plugin list --text
@@ -84,7 +88,7 @@ reach-platforms platforms --text
 
 ```
 agent_reach/
-  cli.py                 # platforms / doctor / explain / search / read
+  cli.py                 # platforms / doctor / explain / check / cooldowns / search / read
   core/
     config.py            # 分层 routing 配置
     context.py           # 子进程、HTTP、secret；超时/输出上限
@@ -196,6 +200,10 @@ python -m agent_reach.cli search "query" --trust-plugin my-plugin
 账本位于 `~/.agent-reach/state/rate_limits.json`（目录 0700、文件 0600），
 可用 `REACH_STATE_DIR` 改写位置。文件只保存平台/来源名与时间戳，不保存
 查询、URL 或凭据；损坏或不可写时直接忽略，不会阻塞请求。
+
+`doctor` 会在对应平台下输出 `cooling` 行；`cooldowns` 命令列出全部未过期
+条目，`cooldowns reset [--platform ID]` 在确认上游已恢复后显式清除。重置
+不影响 `min_interval` 的 pacing 时间戳，也不会自动绕过限流。
 
 平台可在来源上声明 `min_interval`（秒），用于连续调用同一来源时的最小
 间隔；核心把它限制在 10s 以内，超出的部分只会等待，不会报错：

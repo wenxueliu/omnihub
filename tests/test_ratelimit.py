@@ -183,3 +183,93 @@ def test_state_path_honours_reach_state_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "custom"))
     assert state_dir() == tmp_path / "custom"
     assert default_state_path() == tmp_path / "custom" / "rate_limits.json"
+
+
+def test_active_lists_platform_and_source_entries_longest_first(tmp_path):
+    limiter, clock, _ = _limiter(tmp_path)
+    limiter.note_error("reddit", "exa", RATE_LIMITED, retry_after=30)
+    limiter.note_error("web", "jina", UPSTREAM_BROKEN)
+    clock.advance(1)
+    rows = limiter.active()
+    assert [(row["platform"], row["source"], row["scope"]) for row in rows] == [
+        ("web", "jina", "source"),
+        ("reddit", None, "platform"),
+    ]
+    assert rows[0]["code"] == UPSTREAM_BROKEN
+    assert rows[1]["code"] == RATE_LIMITED
+    assert 28 < rows[1]["retry_after_seconds"] <= 30
+    assert [row["platform"] for row in limiter.active() if row["scope"] == "platform"] == [
+        "reddit"
+    ]
+
+
+def test_expired_entries_do_not_appear_in_active(tmp_path):
+    limiter, clock, _ = _limiter(tmp_path)
+    limiter.note_error("reddit", "exa", RATE_LIMITED, retry_after=5)
+    clock.advance(5)
+    assert limiter.active() == []
+
+
+def test_clear_can_target_one_platform(tmp_path):
+    limiter, clock, _ = _limiter(tmp_path)
+    limiter.note_error("reddit", "exa", RATE_LIMITED)
+    limiter.note_error("web", "jina", UPSTREAM_BROKEN)
+    limiter.note_error("web", "exa", TIMEOUT)
+    assert limiter.clear("reddit") == 1
+    assert [row["platform"] for row in limiter.active()] == ["web", "web"]
+    assert limiter.clear("reddit") == 0
+    assert limiter.clear() == 2
+    assert limiter.active() == []
+
+
+def test_clear_leaves_pacing_timestamps_alone(tmp_path):
+    limiter, clock, sleeps = _limiter(tmp_path)
+    limiter.begin("web", "exa", min_interval=5)
+    clock.advance(1)
+    limiter.note_error("web", "exa", TIMEOUT)
+    assert limiter.clear() == 1
+    limiter.begin("web", "exa", min_interval=5)
+    assert sleeps == [4]
+
+
+def test_clear_on_a_missing_ledger_does_not_create_it(tmp_path):
+    limiter, _, _ = _limiter(tmp_path)
+    assert limiter.clear() == 0
+    assert not limiter.path.exists()
+
+
+def test_cooldowns_cli_lists_and_resets(monkeypatch, tmp_path, capsys):
+    from agent_reach.cli import main
+
+    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    limiter = RateLimits()
+    limiter.note_error("github", "github-api", RATE_LIMITED, retry_after=120)
+    limiter.note_error("web", "jina", UPSTREAM_BROKEN)
+
+    assert main(["cooldowns", "--text"]) == 0
+    captured = capsys.readouterr()
+    assert "github" in captured.out
+    assert "web" in captured.out
+    assert "2 active cooldown(s)" in captured.err
+
+    assert main(["cooldowns", "reset", "--platform", "github", "--text"]) == 0
+    captured = capsys.readouterr()
+    assert "cleared 1 entr(y/ies)" in captured.err
+    assert "0 active cooldown(s)" in captured.err
+    assert limiter.blocked("github") is None
+    assert limiter.blocked("web", "jina") is not None
+
+    assert main(["cooldowns", "--text"]) == 0
+    captured = capsys.readouterr()
+    assert "web" in captured.out and "github" not in captured.out
+    assert "1 active cooldown(s)" in captured.err
+
+
+def test_cooldowns_cli_rejects_unknown_platform(monkeypatch, tmp_path, capsys):
+    from agent_reach.cli import main
+
+    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    assert main(["cooldowns", "reset", "--platform", "not-a-platform"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["code"] == BAD_INPUT
+    assert payload["ok"] is False

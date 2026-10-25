@@ -47,9 +47,9 @@ manifest + 共享执行核心”。一个平台就是一个目录：删掉目录
 
 ### 1.4 行为差异
 
-- CLI 是子命令式：`search` / `read` / `check` / `platforms` / `doctor` /
-  `explain` / `plugin` / `skill`；旧式 `agent-reach <channel> <action>`
-  不在本仓库提供，需要兼容层时在调用方包一层。
+- CLI 是子命令式：`search` / `read` / `check` / `cooldowns` / `platforms` /
+  `doctor` / `explain` / `plugin` / `skill`；旧式
+  `agent-reach <channel> <action>` 不在本仓库提供，需要兼容层时在调用方包一层。
 - 输出 envelope 保持 `schema_version: 1`；新增字段只做向后兼容扩展
   （如 `error.retry_after_seconds`、`attempts[].retry_after_seconds`）。
 - 退出码：成功 `0`，`BAD_INPUT` 与参数/配置错误 `2`，其他失败 `1`。
@@ -135,5 +135,7 @@ python -m agent_reach.cli read "<url>" --platform <id> --text
 - [ ] manifest 通过 schema 与跨文件引用校验（`platforms` 无 invalid）
 - [ ] `doctor` 中该平台为 `ok`；缺凭据只应是 `unknown` 而非 error
 - [ ] `check --platform <id>` 的 `search` 与 `read` 均为 `ok`
+      （若因冷却被跳过，先按 `retry_after_seconds` 等待，或确认上游恢复后
+      `cooldowns reset --platform <id>`）
 - [ ] 至少一个 search fixture 与一个 read fixture
 - [ ] 删除目录后其余平台的测试仍然通过

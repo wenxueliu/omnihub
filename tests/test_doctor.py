@@ -31,12 +31,21 @@ class FakeCtx:
         return ProcessResult(stdout="ok", stderr="", returncode=0)
 
 
-def _report(registry, ctx=None, adapters=None):
+def _report(registry, ctx=None, adapters=None, rate_limits=None):
     return build_doctor_report(
         registry,
         ctx=ctx or FakeCtx(),
         adapters=adapters or {"builtin": FakeAdapter()},
+        rate_limits=rate_limits,
     )
+
+
+class StubLimits:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def active(self):
+        return list(self.rows)
 
 
 def test_doctor_reports_missing_required_tool_and_secret(make_platform, tmp_path):
@@ -168,3 +177,46 @@ def test_doctor_cli_json(make_platform, tmp_path, capsys):
     out = capsys.readouterr().out
     assert '"platforms"' in out
     assert '"demo"' in out
+
+
+def test_doctor_surfaces_cooldowns_without_changing_status(make_platform, tmp_path):
+    root = tmp_path / "plugins"
+    make_platform(root, "demo")
+    row = {
+        "scope": "source",
+        "platform": "demo",
+        "source": "exa",
+        "code": "UPSTREAM_BROKEN",
+        "retry_after_seconds": 42.0,
+    }
+    report = _report(
+        discover(plugin_dirs=[root], include_builtin=False),
+        rate_limits=StubLimits([row]),
+    )
+    platform = report["platforms"][0]
+    assert platform["status"] == "ok"
+    assert platform["cooldowns"] == [row]
+    assert report["meta"]["cooling_count"] == 1
+    assert report["ok"] is True
+
+
+def test_doctor_without_a_ledger_reports_no_cooldowns(make_platform, tmp_path):
+    root = tmp_path / "plugins"
+    make_platform(root, "demo")
+    report = _report(discover(plugin_dirs=[root], include_builtin=False))
+    assert report["platforms"][0]["cooldowns"] == []
+    assert report["meta"]["cooling_count"] == 0
+
+
+def test_doctor_cli_text_prints_active_cooldowns(monkeypatch, tmp_path, capsys):
+    from agent_reach.cli import main
+    from agent_reach.core.ratelimit import RateLimits
+    from agent_reach.core.result import RATE_LIMITED
+
+    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    RateLimits().note_error("github", "github-api", RATE_LIMITED, retry_after=120)
+    code = main(["doctor", "--text"])
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "cooling platform" in captured.out
+    assert "120s left (RATE_LIMITED)" in captured.out

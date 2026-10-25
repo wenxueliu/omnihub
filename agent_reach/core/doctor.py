@@ -166,11 +166,17 @@ def _platform_row(
     *,
     ctx: Any,
     adapters: Mapping[str, Any],
+    rate_limits: Any = None,
 ) -> dict:
     tools = _tool_rows(platform)
     adapter_rows = _adapter_rows(platform, adapters)
     secrets = _secret_rows(platform, ctx)
     auth = _auth_row(platform, ctx)
+    cooldowns = []
+    if rate_limits is not None:
+        cooldowns = [
+            row for row in rate_limits.active() if row["platform"] == platform.id
+        ]
 
     required_failures = [
         row for row in tools if row["required"] and not row["ok"]
@@ -201,6 +207,7 @@ def _platform_row(
         "adapters": adapter_rows,
         "secrets": secrets,
         "auth": auth,
+        "cooldowns": cooldowns,
     }
 
 
@@ -209,10 +216,18 @@ def build_doctor_report(
     *,
     ctx: Any,
     adapters: Mapping[str, Any],
+    rate_limits: Any = None,
 ) -> dict:
-    """Return an agent-friendly, secret-free health report."""
+    """Return an agent-friendly, secret-free health report.
+
+    ``cooldowns`` come from the local rate-limit ledger when ``rate_limits``
+    is passed; they describe transient pauses, not a health problem, so they
+    never change ``status``.
+    """
     rows = [
-        _platform_row(platform, ctx=ctx, adapters=adapters)
+        _platform_row(
+            platform, ctx=ctx, adapters=adapters, rate_limits=rate_limits
+        )
         for platform in sorted(registry.platforms.values(), key=lambda p: (p.priority, p.id))
     ]
     problems = sum(1 for row in rows if row["status"] == "error")
@@ -230,6 +245,7 @@ def build_doctor_report(
             "error_count": problems,
             "manifest_error_count": len(errors),
             "degraded_count": sum(1 for row in rows if row["status"] == "degraded"),
+            "cooling_count": sum(1 for row in rows if row["cooldowns"]),
         },
         "error": None,
     }

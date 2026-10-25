@@ -111,6 +111,47 @@ class RateLimits:
                 best = (remaining, code, scope)
         return best
 
+    def active(self) -> list[dict[str, Any]]:
+        """List unexpired cooldowns and source pauses, longest remaining first."""
+        now = self._now()
+        state = self._load()
+        rows: list[dict[str, Any]] = []
+        for bucket, scope in (("cooldowns", "platform"), ("pauses", "source")):
+            for key, entry in state[bucket].items():
+                remaining = float(entry.get("until") or 0) - now
+                if remaining <= 0:
+                    continue
+                platform_id, source_label = self._split(key)
+                if platform_id is None:
+                    continue
+                rows.append(
+                    {
+                        "scope": scope,
+                        "platform": platform_id,
+                        "source": source_label,
+                        "code": str(entry.get("code") or RATE_LIMITED),
+                        "retry_after_seconds": round(remaining, 1),
+                    }
+                )
+        rows.sort(
+            key=lambda row: (
+                -row["retry_after_seconds"],
+                row["platform"],
+                row["source"] or "",
+            )
+        )
+        return rows
+
+    @staticmethod
+    def _split(key: str) -> tuple[Optional[str], Optional[str]]:
+        """Split ``platform:<id>`` / ``source:<id>:<label>``."""
+        parts = key.split(":", 2)
+        if len(parts) < 2 or parts[0] not in ("platform", "source"):
+            return None, None
+        if parts[0] == "platform" or len(parts) == 2:
+            return parts[1], None
+        return parts[1], parts[2]
+
     # -- writes ----------------------------------------------------------
     def note_error(
         self,
@@ -158,6 +199,39 @@ class RateLimits:
             state["pauses"].pop(key, None)
 
         self._mutate(mutate)
+
+    def clear(self, platform_id: Optional[str] = None) -> int:
+        """Remove cooldowns and pauses, optionally only one platform's.
+
+        Returns the number of entries removed. Pacing timestamps are left
+        alone: they are short-lived and do not block a request.
+        """
+        state = self._load()
+        if not any(
+            self._owned_by(key, platform_id)
+            for bucket in ("cooldowns", "pauses")
+            for key in state[bucket]
+        ):
+            return 0
+        cleared = 0
+
+        def mutate(state: dict) -> None:
+            nonlocal cleared
+            for bucket in ("cooldowns", "pauses"):
+                for key in [
+                    key for key in state[bucket] if self._owned_by(key, platform_id)
+                ]:
+                    state[bucket].pop(key, None)
+                    cleared += 1
+
+        self._mutate(mutate)
+        return cleared
+
+    def _owned_by(self, key: str, platform_id: Optional[str]) -> bool:
+        owner, _ = self._split(key)
+        if owner is None:
+            return False
+        return platform_id is None or owner == platform_id
 
     def begin(
         self,
