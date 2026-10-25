@@ -32,6 +32,25 @@ EXA_TEXT = (
     "Some body\n"
 )
 
+BING_TEXT = (
+    "Title: python asyncio - Bing\n"
+    "\n"
+    "URL Source: https://www.bing.com/search?q=python+asyncio\n"
+    "\n"
+    "Markdown Content:\n"
+    "45,700 results\n"
+    "\n"
+    "1.   ## [**asyncio** — Asynchronous I/O — **Python** documentation]"
+    "(https://www.bing.com/ck/a?!&&p=abc&u=a1aHR0cHM6Ly9kb2NzLnB5dGhvbi5vcmcvMy9saWJyYXJ5L2FzeW5jaW8uaHRtbA&ntb=1)\n"
+    "\n"
+    "asyncio is a library to write concurrent code.\n"
+    "\n"
+    "2.   ## [**Python**'s **asyncio**: A Hands-On Walkthrough]"
+    "(https://www.bing.com/ck/a?!&&p=def&u=a1aHR0cHM6Ly9yZWFscHl0aG9uLmNvbS9hc3luYy1pby1weXRob24v&ntb=1)\n"
+    "\n"
+    "A walkthrough of async I/O.\n"
+)
+
 
 class FakeHttpCtx:
     timeout = 30
@@ -243,3 +262,94 @@ def test_web_read_uses_browser_when_jina_fails():
     assert result["items"][0]["text"] == "Rendered by the user's browser"
     assert daemon.calls[0].call == "read"
     assert daemon.calls[0].args["url"] == "https://example.com/"
+
+
+def test_bing_search_parses_markdown_and_decodes_redirects():
+    parser = _web_parser()
+    raw = RawResult(text=BING_TEXT, meta={"params": {"limit": 2}})
+    items = parser.bing_search(raw)
+    assert [item["url"] for item in items] == [
+        "https://docs.python.org/3/library/asyncio.html",
+        "https://realpython.com/async-io-python/",
+    ]
+    assert items[0]["title"] == "asyncio — Asynchronous I/O — Python documentation"
+    assert items[0]["text"] == "asyncio is a library to write concurrent code."
+    assert items[1]["title"] == "Python's asyncio: A Hands-On Walkthrough"
+
+
+def test_bing_search_rejects_unrecognized_output():
+    parser = _web_parser()
+    with pytest.raises(OmniHubError) as info:
+        parser.bing_search(RawResult(text="Sorry, something went wrong."))
+    assert info.value.code == UPSTREAM_BROKEN
+
+
+def test_web_search_engine_bing_skips_exa():
+    registry = discover()
+    ctx = FakeHttpCtx([RawResult(text=BING_TEXT, content_type="text/plain")])
+    result = run_action(
+        registry,
+        {"version": 1, "mode": "first_success"},
+        action="search",
+        params={"query": "python asyncio", "limit": 2, "engine": "bing"},
+        platform="web",
+        ctx=ctx,
+        adapters=build_adapters(),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "bing"
+    assert result["items"][0]["source"] == "bing"
+    assert len(ctx.calls) == 1
+    assert ctx.calls[0][0].startswith("https://r.jina.ai/https://www.bing.com/search")
+
+
+def test_web_search_engine_google_uses_the_browser():
+    registry = discover()
+    ctx = FakeHttpCtx([])
+    daemon = HealthyDaemon(
+        [
+            {"title": "Example", "url": "https://example.com/", "text": "Snippet"},
+        ]
+    )
+    adapters = build_adapters()
+    adapters["daemon"] = daemon
+    result = run_action(
+        registry,
+        {"version": 1, "mode": "first_success"},
+        action="search",
+        params={"query": "example", "limit": 2, "engine": "google"},
+        platform="web",
+        ctx=ctx,
+        adapters=adapters,
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "google"
+    assert ctx.calls == []
+    assert daemon.calls[0].call == "browse"
+    assert daemon.calls[0].script.endswith("search_google.js")
+    assert daemon.calls[0].args["url"].startswith("https://www.google.com/search")
+
+
+def test_web_search_auto_falls_back_to_bing_when_exa_breaks():
+    registry = discover()
+    ctx = FakeHttpCtx(
+        [
+            RawResult(text="not json", content_type="text/plain"),
+            RawResult(text=BING_TEXT, content_type="text/plain"),
+        ]
+    )
+    result = run_action(
+        registry,
+        {"version": 1, "mode": "first_success"},
+        action="search",
+        params={"query": "python asyncio", "limit": 2},
+        platform="web",
+        ctx=ctx,
+        adapters=build_adapters(),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "bing"
+    assert [attempt["result"] for attempt in result["meta"]["attempts"]] == [
+        "ERROR",
+        "OK",
+    ]

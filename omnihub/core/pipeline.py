@@ -296,18 +296,12 @@ def _attempt(
     return entry
 
 
-def _skip_reason(
-    source: Source, ctx: Any, adapters: Mapping[str, Any]
+def _skip_one(
+    condition: str,
+    ctx: Any,
+    adapters: Mapping[str, Any],
+    params: Mapping[str, Any],
 ) -> Optional[str]:
-    """Evaluate a source ``when`` condition.
-
-    Supported forms: ``secret:NAME`` (environment or secrets file),
-    ``tool:NAME`` (executable on PATH) and ``adapter:NAME`` (the adapter's
-    health probe passes). An empty condition always runs.
-    """
-    condition = (source.when or "").strip()
-    if not condition:
-        return None
     kind, _, name = condition.partition(":")
     kind = kind.strip().lower()
     name = name.strip()
@@ -326,11 +320,50 @@ def _skip_reason(
         except Exception as exc:  # a broken probe means "skip", not "fail the platform"
             return f"adapter {name!r} probe failed: {exc}"
         return None if health.ok else (health.detail or f"adapter {name!r} is not available")
+    if kind == "param":
+        param, sep, expected = name.partition("=")
+        param = param.strip()
+        if not param:
+            raise OmniHubError(NEED_SETUP, f"invalid when condition {condition!r}")
+        current = params.get(param)
+        if not sep:
+            return None if current else f"param {param!r} is not set"
+        allowed = [value.strip() for value in expected.split("|") if value.strip()]
+        if not allowed:
+            raise OmniHubError(NEED_SETUP, f"invalid when condition {condition!r}")
+        if str(current) not in allowed:
+            shown = ", ".join(repr(value) for value in allowed)
+            return f"param {param!r} is {current!r}; expected one of {shown}"
+        return None
     raise OmniHubError(
         NEED_SETUP,
         f"unsupported when condition {condition!r} "
-        "(use secret:NAME, tool:NAME or adapter:NAME)",
+        "(use secret:NAME, tool:NAME, adapter:NAME or param:NAME=VALUE)",
     )
+
+
+def _skip_reason(
+    source: Source,
+    ctx: Any,
+    adapters: Mapping[str, Any],
+    params: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    """Evaluate a source ``when`` condition.
+
+    Conditions are joined with commas and must all pass. Supported forms:
+    ``secret:NAME`` (environment or secrets file), ``tool:NAME`` (executable
+    on PATH), ``adapter:NAME`` (the adapter's health probe passes) and
+    ``param:NAME=VALUE`` (``|``-separated alternatives; bare ``param:NAME``
+    means "truthy"). An empty condition always runs.
+    """
+    conditions = [part.strip() for part in (source.when or "").split(",") if part.strip()]
+    if not conditions:
+        return None
+    for condition in conditions:
+        reason = _skip_one(condition, ctx, adapters, params or {})
+        if reason:
+            return reason
+    return None
 
 
 def _try_platform(
@@ -395,7 +428,7 @@ def _try_platform(
         started = time.monotonic()
         label = source_label(source)
         try:
-            skip = _skip_reason(source, ctx, adapters)
+            skip = _skip_reason(source, ctx, adapters, prepared)
             if skip:
                 last_error = OmniHubError(NEED_SETUP, skip)
                 attempts.append(_attempt(platform, source, "SKIP", started, reason=skip))

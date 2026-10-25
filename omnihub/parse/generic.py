@@ -20,7 +20,7 @@ import yaml
 
 from omnihub.core.result import make_item
 from omnihub.parse.daemon import daemon_page
-from omnihub.parse.web import exa_read, exa_search, jina
+from omnihub.parse.web import bing_search, exa_read, exa_search, jina
 
 #: Parsers shared by several platforms. A platform-local ``parse.py`` handler
 #: with the same name takes precedence.
@@ -28,6 +28,7 @@ NAMED_PARSERS = {
     "exa_search": exa_search,
     "exa_read": exa_read,
     "jina": jina,
+    "bing_search": bing_search,
     "daemon_page": daemon_page,
 }
 

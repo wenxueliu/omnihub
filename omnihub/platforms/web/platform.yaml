@@ -1,8 +1,9 @@
 id: web
-description: Public-web fallback — Exa hosted search, Jina Reader and Exa page fetch.
+description: Public-web fallback — Exa, Bing and Google search, Jina Reader and Exa page fetch.
 version: 1
 level: default
 priority: 10
+capabilities: [http, browser]
 domains: []
 public_web: true
 
@@ -24,9 +25,17 @@ actions:
         type: int
         default: 5
         description: Maximum number of results.
+      engine:
+        type: str
+        default: auto
+        choices: [auto, exa, bing, google]
+        description: >-
+          Search backend. `auto` tries Exa, then Bing, then Google (the
+          browser-backed source) until one returns results.
     sources:
       - adapter: http
         name: exa
+        when: "param:engine=auto|exa"
         method: POST
         url: https://mcp.exa.ai/mcp
         headers:
@@ -46,6 +55,34 @@ actions:
           - exa_search
         priority: 10
         timeout: 30
+      - adapter: http
+        name: bing
+        when: "param:engine=auto|bing"
+        url: "https://r.jina.ai/https://www.bing.com/search?q=${query|urlencode}&count=${limit}"
+        headers:
+          Accept: text/plain
+          User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+        parse:
+          - bing_search
+        priority: 20
+        timeout: 45
+      - adapter: daemon
+        name: google
+        when: "param:engine=auto|google,adapter:daemon"
+        call: browse
+        script: scripts/search_google.js
+        args:
+          url: "https://www.google.com/search?q=${query|urlencode}&num=${limit}&hl=en"
+          wait_for: "#search"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: google search"
+        parse:
+          - json_items
+        priority: 30
+        timeout: 60
+        min_interval: 2
 
   read:
     params:

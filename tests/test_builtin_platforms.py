@@ -23,8 +23,12 @@ def test_all_builtin_manifests_validate():
             assert action.sources, f"{platform.id}.{name} has no sources"
             for source in action.sources:
                 assert source.adapter in ADAPTER_KINDS
-                assert not source.when or source.when.split(":", 1)[0] in {
-                    "secret",
-                    "tool",
-                    "adapter",
-                }
+                for condition in (source.when or "").split(","):
+                    if not condition.strip():
+                        continue
+                    assert condition.split(":", 1)[0].strip() in {
+                        "secret",
+                        "tool",
+                        "adapter",
+                        "param",
+                    }

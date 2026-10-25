@@ -35,6 +35,10 @@ python -m omnihub.cli explain --url https://www.example.com/a --action read
 python -m omnihub.cli search "yt-dlp github" --platform web --limit 3
 python -m omnihub.cli read https://example.com --platform web
 
+# 指定公共网页搜索后端（auto = Exa → Bing → Google）
+python -m omnihub.cli search "yt-dlp github" --platform web --engine bing --limit 3
+python -m omnihub.cli search "yt-dlp github" --platform web --engine google --limit 3
+
 # 搜索后自动补正文（失败隔离，失败项进 meta.enrich_errors）
 python -m omnihub.cli search "example domain" --limit 3 --enrich 2
 
@@ -116,7 +120,9 @@ python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli read <note-id> -
 CLI 的完整参数与错误码见
 [`references/xiaohongshu-cli.md`](omnihub/platforms/xiaohongshu/references/xiaohongshu-cli.md)。
 
-`web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
+`web` 是公共网页兜底平台：搜索默认按 Exa hosted MCP（无需 Key）→ Bing
+（经 Jina Reader）→ Google（kimi-webbridge 真实浏览器）依次尝试，可用
+`--engine exa|bing|google` 指定单一后端；读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
 100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140、`twitter`
@@ -205,10 +211,10 @@ omnihub/
     daemon.py            # kimi-webbridge：/status、session、cursor 分页、browse 站点脚本
   parse/
     generic.py           # JSON / YAML / OpenCLI / text 解析链
-    web.py               # 共享 Exa / Jina 解析器
+    web.py               # 共享 Exa / Jina / Bing 解析器
     daemon.py            # 浏览器读取结果 → 统一 item
   platforms/noop/        # 最小离线平台（契约测试/示例）
-  platforms/web/         # Exa + Jina 公共网页平台
+  platforms/web/         # Exa / Bing / Google 搜索 + Jina 公共网页读取
   platforms/github/      # GitHub 搜索、仓库/issue/PR 读取
   platforms/v2ex/        # SOV2EX 搜索、主题与回复读取
   platforms/bilibili/    # Exa 搜索、浏览器解析 + 字幕 JSON 读取
@@ -268,10 +274,12 @@ actions:
 继续下一个来源；`NEED_LOGIN`、`RATE_LIMITED`、`PLATFORM_BLOCKED`、
 `BAD_INPUT` 等终态错误会立即停止。
 
-可选来源用 `when: secret:NAME`、`when: tool:NAME` 或
-`when: adapter:NAME` 声明：条件不满足时记为 `SKIP`，不会让整个平台失败。
-`adapter:daemon` 表示“该适配器的健康探针通过才运行”，例如 `web` 的
-kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭据”，缺失时
+可选来源用 `when: secret:NAME`、`when: tool:NAME`、
+`when: adapter:NAME` 或 `when: param:NAME=VALUE` 声明：条件不满足时记为
+`SKIP`，不会让整个平台失败。`param:` 支持 `|` 分隔的多个允许值，多个条件用
+逗号连接表示必须同时满足，例如 `web` 的 Google 来源：
+`param:engine=auto|google,adapter:daemon`。`adapter:daemon` 表示“该适配器的
+健康探针通过才运行”。平台的 `auth.secret` 表示“可选登录凭据”，缺失时
 `doctor` 提示但仍使用公共来源；`requires.secrets` 则表示必需凭据。
 
 ### 第三方插件

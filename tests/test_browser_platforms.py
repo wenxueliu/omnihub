@@ -14,7 +14,7 @@ from omnihub.core.router import build_plan
 PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 BROWSER_PLATFORMS = ("twitter", "xueqiu", "xiaohongshu", "linkedin", "zhihu")
 # WeChat has a browser source too, but Exa is its primary search source.
-BROWSER_JS_PLATFORMS = BROWSER_PLATFORMS + ("wechat",)
+BROWSER_JS_PLATFORMS = BROWSER_PLATFORMS + ("wechat", "web")
 
 
 def _registry():

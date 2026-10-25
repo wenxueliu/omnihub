@@ -747,6 +747,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
     params = {"query": args.query}
     if args.limit is not None:
         params["limit"] = args.limit
+    if getattr(args, "engine", None):
+        params["engine"] = args.engine
     payload = run_action(
         registry,
         routing,
@@ -1020,6 +1022,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Read the first N results that only have a short snippet; "
         "failures are reported in meta.enrich_errors.",
+    )
+    search.add_argument(
+        "--engine",
+        choices=("auto", "exa", "bing", "google"),
+        help="Web search backend (web platform): auto tries exa, then bing, "
+        "then google.",
     )
     _add_action_args(search, search=True)
     search.set_defaults(func=_cmd_search)

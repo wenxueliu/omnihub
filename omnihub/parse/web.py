@@ -1,20 +1,26 @@
-"""Shared Exa MCP and Jina Reader parsers.
+"""Shared Exa MCP, Jina Reader and Bing parsers.
 
 Exa's hosted MCP replies with JSON-RPC, often as Server-Sent Events. Jina
-returns a small header block followed by ``Markdown Content:``. Both are
-normalized to plain item dicts here; the pipeline attaches provenance. Any
-platform may name these handlers in ``parse:`` (``exa_search``, ``exa_read``,
-``jina``); a platform-local ``parse.py`` with the same name still wins.
+returns a small header block followed by ``Markdown Content:``. Bing's
+renderer (reached through Jina) emits a numbered Markdown list whose links are
+``bing.com/ck/a`` redirects. All three are normalized to plain item dicts
+here; the pipeline attaches provenance. Any platform may name these handlers
+in ``parse:`` (``exa_search``, ``exa_read``, ``jina``, ``bing_search``); a
+platform-local ``parse.py`` with the same name still wins.
 """
 
 from __future__ import annotations
 
+import base64
+import html
 import json
 import re
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlsplit
 
 from omnihub.core.result import (
     BAD_INPUT,
+    PLATFORM_BLOCKED,
     RATE_LIMITED,
     UPSTREAM_BROKEN,
     OmniHubError,
@@ -215,3 +221,93 @@ def jina(raw: Any, *, action: Any = None, ctx: Any = None) -> list[dict]:
     if not body.strip():
         raise OmniHubError(UPSTREAM_BROKEN, "Jina Reader returned no content")
     return [_parse_jina(target, body)]
+
+
+_BING_RESULT_RE = re.compile(
+    r"^\s*(?:\d+\.\s*)?##\s+\[(?P<title>.+?)\]\((?P<url>https?://[^\s)]+)\)\s*$"
+)
+_BING_BLOCK_RE = re.compile(
+    r"captcha|verify you are human|unusual traffic|"
+    r"our systems have detected|access denied|request blocked|"
+    r"enable javascript and cookies to continue",
+    re.IGNORECASE,
+)
+_MARKDOWN_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!>])")
+
+
+def _clean_markdown(value: str) -> str:
+    """Turn Bing's emphasized Markdown label into plain text."""
+    value = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", value or "")
+    value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"\*\*|__|`|\*", "", value)
+    value = _MARKDOWN_ESCAPE_RE.sub(r"\1", value)
+    value = html.unescape(value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _decode_bing_url(url: str) -> str:
+    """Unwrap a ``bing.com/ck/a?...&u=a1<base64>`` tracking redirect."""
+    url = html.unescape(url or "")
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    host = (parts.hostname or "").lower()
+    if not host.endswith("bing.com") or not parts.path.startswith("/ck/a"):
+        return url
+    token = parse_qs(parts.query).get("u", [None])[0]
+    if not token:
+        return url
+    if token.startswith("a1"):
+        token = token[2:]
+    try:
+        decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        target = decoded.decode("utf-8", "replace")
+    except (ValueError, UnicodeDecodeError):
+        return url
+    return target if target.startswith(("http://", "https://")) else url
+
+
+def _parse_bing_markdown(text: str) -> list[dict]:
+    items: list[dict] = []
+    lines = (text or "").splitlines()
+    for index, line in enumerate(lines):
+        match = _BING_RESULT_RE.match(line)
+        if not match:
+            continue
+        title = _clean_markdown(match.group("title"))
+        url = _decode_bing_url(match.group("url"))
+        if not title or not url:
+            continue
+        snippet = ""
+        for follow in lines[index + 1 :]:
+            candidate = follow.strip()
+            if not candidate:
+                continue
+            if _BING_RESULT_RE.match(candidate) or candidate.startswith(("#", "[")):
+                break
+            snippet = _clean_markdown(candidate)
+            break
+        items.append(make_item(title=title, url=url, text=snippet or None, raw={"engine": "bing"}))
+    return items
+
+
+def bing_search(raw: Any, *, action: Any = None, ctx: Any = None) -> list[dict]:
+    """Parse the Markdown Jina Reader returns for a Bing results page."""
+    text = str(getattr(raw, "text", "") or "")
+    items = _parse_bing_markdown(text)
+    if not items:
+        if _BING_BLOCK_RE.search(text):
+            raise OmniHubError(
+                PLATFORM_BLOCKED,
+                "Bing returned a captcha or risk-control page",
+            )
+        if not text.strip():
+            raise OmniHubError(UPSTREAM_BROKEN, "Bing returned no content")
+        raise OmniHubError(UPSTREAM_BROKEN, "Bing returned no recognizable search results")
+    params = getattr(raw, "meta", {}).get("params") or {}
+    try:
+        limit = int(params.get("limit", 5))
+    except (TypeError, ValueError):
+        limit = 5
+    return items[: max(0, limit)]
