@@ -46,7 +46,7 @@ python -m agent_reach.cli doctor --text
 |---|---|---|---|
 | `web` | search, read | http | daemon 可选 |
 | `github` | search, read | builtin, http | `GITHUB_TOKEN`（缺省用公共来源） |
-| `bilibili` | search, read | builtin, http | `BILIBILI_COOKIE`（缺省用 Jina/Exa） |
+| `bilibili` | search, read | http | daemon（浏览器登录态，读取字幕；默认写入 `_raw/`） |
 | `v2ex` | search, read | builtin, http | — |
 | `reddit` | search, read | http | daemon 可选 |
 | `youtube` | search, read | http | daemon 可选 |
@@ -80,7 +80,7 @@ python -m agent_reach.cli check --timeout 90 --text
 | github | search | github-api | ok |
 | github | read | github-api | ok |
 | bilibili | search | exa | ok |
-| bilibili | read | jina | ok |
+| bilibili | read | kimi-browser | ok |
 | v2ex | search | sov2ex | ok |
 | v2ex | read | v2ex-api | ok |
 | reddit | search | exa | ok |

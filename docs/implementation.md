@@ -637,7 +637,7 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 |---|---|---|
 | `platforms/github` | Agent-Reach `channels/github.py` | REST 搜索与仓库/README/issue/PR 读取；去掉 `gh` 依赖，token 只经 `ctx.secret` |
 | `platforms/v2ex` | Agent-Reach `channels/v2ex.py` | 保留 topic/replies API 与字段映射；新增 SOV2EX 搜索 |
-| `platforms/bilibili` | Agent-Reach `channels/bilibili.py` | 保留 BV 解析、view API、错误码映射；Cookie 化并用 Jina/Exa 兜底 |
+| `platforms/bilibili` | Agent-Reach `channels/bilibili.py` | 搜索走 Exa；`read` 改为在登录态浏览器里解析 `cid` 与字幕签名地址，再由 `parse.py` 下载字幕 JSON |
 | `core/doctor.py` | 新实现 | 工具、适配器、必需/可选凭据、builtin auth.status；不联网、不泄露值 |
 | `core/pipeline.py` source `when` | 新实现 | `secret:NAME` / `tool:NAME`；不满足记为 `SKIP` |
 | `core/template.py` 过滤器 | 新实现 | `urlencode` / `lower` / `upper` / `strip`；查询值安全入 URL |
@@ -764,7 +764,7 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 |---|---|---|---|
 | `github` (100) | `GET /search/repositories`（token / 匿名两个来源） | `read.py`：仓库 + README、issue/PR + 前 50 条评论 | `GITHUB_TOKEN` / `GH_TOKEN` |
 | `v2ex` (120) | SOV2EX `/api/search`；失败回退 Exa `site:v2ex.com` | `read.py`：`topics/show.json` + `replies/show.json` | 无 |
-| `bilibili` (110) | Exa `site:bilibili.com` | `read.py`（需 Cookie）→ Jina → Exa | `BILIBILI_COOKIE` |
+| `bilibili` (110) | Exa `site:bilibili.com` | `daemon browse` 解析 `cid` + 字幕签名地址 → `parse.py` 下载字幕 JSON | 浏览器登录态（daemon） |
 
 路由默认值调整为 `web: 10`、`github: 100`、`bilibili: 110`、`v2ex: 120`：
 普通搜索走公共网页，站点平台通过 `--platform` 或用户配置的 intent 使用；
@@ -780,12 +780,16 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 - `search "python 限流" --platform v2ex` 返回 SOV2EX 命中；
   `read https://www.v2ex.com/t/1` 返回主题正文与回复。
 - `search "python 教程" --platform bilibili` 返回 Exa 站点结果；
-  未配置 Cookie 时 `read` 跳过 API、走 Jina，attempts 记录 `SKIP`；
-  配置 `BILIBILI_COOKIE` 后走视频 API 并返回结构化统计。
+  `read https://www.bilibili.com/video/BV1S1dPBYEG9` 通过 kimi-webbridge
+  在已登录浏览器里解析 `cid` 与字幕签名地址并下载字幕 JSON；daemon 或
+  登录态缺失时来源记为 `SKIP`。
 - `tests/test_platform_contracts.py` 覆盖优先级、域名路由、可选来源
   跳过/启用、凭据不泄露、doctor 与删除平台目录的隔离性。
-- `Bilibili` 匿名 API 仍受 412 风控；公共读取依赖 Jina 渲染，配置 Cookie
-  才能获得稳定、结构化的视频元数据。
+- `Bilibili` 匿名 API 仍受 412 风控；字幕读取依赖浏览器登录态（daemon），
+  字幕 JSON 本身用 `Referer` 直接从 `aisubtitle.hdslb.com` 下载。
+- `player/v2` 的应答来自缓存池，每次返回的轨道切片不同，还会混入其他视频的
+  AI 轨道；浏览器侧并发采样 10 次并按 `id_str` 去重，`parse.py` 再按字幕覆盖
+  时长（`to / duration`）筛出真正属于本视频的轨道，人工轨道优先于 AI 轨道。
 
 ### M3 — 有状态工具与按需抓取
 
@@ -896,8 +900,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   测试。
 - **验收结果**：`python -m pytest -q` 211 项通过（离线）；真实网络
   `check` 的 12 项全部 `ok`——github `github-api`，web `exa`/`jina`，
-  v2ex `sov2ex`/`v2ex-api`，bilibili `exa`/`jina`，reddit 与 youtube
-  均为 `exa`。
+  v2ex `sov2ex`/`v2ex-api`，bilibili `exa`/`kimi-browser`，reddit 与
+  youtube 均为 `exa`。
 
 **M5 统一限流与冷却（2026-10-25）**
 

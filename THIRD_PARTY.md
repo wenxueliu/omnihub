@@ -35,7 +35,7 @@ M2 adaptations:
 |---|---|---|
 | `agent_reach/platforms/github/parse.py`, `read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
 | `agent_reach/platforms/v2ex/parse.py`, `read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
-| `agent_reach/platforms/bilibili/read.py` | `agent_reach/channels/bilibili.py` | kept the BV regex, `/x/web-interface/view?bvid=`, API code mapping and item fields. Cookie comes from `BILIBILI_COOKIE` through `ctx.secret` instead of the `bili-cli` credential store; the source only runs when configured, with Jina/Exa as public fallbacks instead of `bili-cli` / OpenCLI |
+| `agent_reach/platforms/bilibili/parse.py` | `agent_reach/channels/bilibili.py` | kept the AI/CC subtitle item shape (title, author, publish time, cue text) and Bilibili API error mapping. The `bili-cli` transport is gone: the browser source resolves `cid` and the signed subtitle URL, and the parser downloads the JSON through `ctx.http` with a Bilibili Referer. No cookie store or `BILIBILI_COOKIE` |
 
 No upstream copyright notices were removed.
 

@@ -40,13 +40,14 @@ python -m agent_reach.cli read https://github.com/pallets/flask/issues/42 --text
 python -m agent_reach.cli search "python 限流" --platform v2ex --limit 3
 python -m agent_reach.cli read https://www.v2ex.com/t/1 --text
 python -m agent_reach.cli search "rust 教程" --platform bilibili --limit 3
-python -m agent_reach.cli read https://www.bilibili.com/video/BV1rpWjevEip --text
+python -m agent_reach.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
 python -m agent_reach.cli search "asyncio" --platform reddit --limit 3
 python -m agent_reach.cli read https://www.reddit.com/r/Python/comments/j531n0/an_introduction_to_async_programming_python/ --text
 python -m agent_reach.cli search "asyncio tutorial" --platform youtube --limit 3
 python -m agent_reach.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --text
 
 # 登录态平台（需要本机 kimi-webbridge daemon 与浏览器登录）
+python -m agent_reach.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
 python -m agent_reach.cli search "openai" --platform twitter --limit 3
 python -m agent_reach.cli read https://x.com/user/status/1 --text
 python -m agent_reach.cli search "茅台" --platform xueqiu --limit 3
@@ -116,8 +117,13 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
   `GITHUB_TOKEN` 或 `GH_TOKEN` 可提高限额并访问私有仓库。
 - `v2ex`：SOV2EX 搜索主题，V2EX 公共 API 读取主题和第一页回复。
-- `bilibili`：Exa `site:bilibili.com` 搜索；读取优先 Jina，配置
-  `BILIBILI_COOKIE` 后可用视频 API 获取结构化元数据。
+- `bilibili`：Exa `site:bilibili.com` 搜索；`read` 通过 kimi-webbridge 在
+  已登录浏览器里解析视频 `cid` 和字幕签名地址，再下载 AI/CC 字幕 JSON，
+  输出带标题、UP 主、发布时间和逐条字幕正文的 item（存在多语言轨道时每条
+  轨道一个 item）。字幕默认以 `.txt` + `.srt` 写入当前目录的 `_raw/`
+  （可用 `REACH_RAW_DIR` 覆盖），文件路径记录在 item 的
+  `raw.saved_files`。不需要 `BILIBILI_COOKIE`；daemon 或登录态缺失时
+  `read` 记为 `SKIP`，`search` 不受影响。
 - `reddit`：Exa `site:reddit.com` 搜索；Exa fetch 读取公开帖子与高赞评论，
   daemon 可用时可用真实浏览器兜底（Reddit 的匿名 JSON 与 Jina 都返回 403）。
 - `youtube`：Exa `site:youtube.com` 搜索；Exa fetch 读取页面正文/字幕文本，
@@ -184,7 +190,7 @@ agent_reach/
   platforms/web/         # Exa + Jina 公共网页平台
   platforms/github/      # GitHub 搜索、仓库/issue/PR 读取
   platforms/v2ex/        # SOV2EX 搜索、主题与回复读取
-  platforms/bilibili/    # Exa 搜索、Jina / Cookie API 读取
+  platforms/bilibili/    # Exa 搜索、浏览器解析 + 字幕 JSON 读取
   platforms/reddit/      # Exa 搜索与帖子读取、浏览器兜底
   platforms/youtube/     # Exa 搜索与视频页/字幕读取、浏览器兜底
   platforms/twitter/     # 登录态浏览器搜索与推文读取（Exa 搜索兜底）

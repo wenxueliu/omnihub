@@ -28,6 +28,11 @@ def _fixture(platform: str, name: str):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_raw_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("REACH_RAW_DIR", str(tmp_path / "_raw"))
+
+
 class HttpStub:
     def __init__(self, routes, *, secrets=None):
         self.routes = list(routes)
@@ -180,66 +185,182 @@ def test_v2ex_missing_topic_is_not_found():
     assert info.value.code == NOT_FOUND
 
 
-def test_bilibili_read_requires_cookie_and_returns_video_metadata():
-    module = _load("bilibili", "read.py")
-    view = _fixture("bilibili", "view.json")
-
-    assert module.read_video("https://www.bilibili.com/video/BV1xx411c7mD", ctx=HttpStub([])) == []
-
-    ctx = HttpStub(
-        [("/x/web-interface/view", RawResult(data=view))],
-        secrets={"BILIBILI_COOKIE": "SESSDATA=secret; bili_jct=csrf"},
+def _bilibili_raw(**overrides):
+    payload = {
+        "title": "费曼的 47 本笔记",
+        "owner": "示例UP主",
+        "pubdate": 1700000000,
+        "duration": 367,
+        "bvid": "BV1S1dPBYEG9",
+        "cid": 38164562135,
+        "track_count": 1,
+        "subtitles": [
+            {
+                "lan": "ai-zh",
+                "lan_doc": "中文",
+                "url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/demo.json",
+            }
+        ],
+    }
+    payload.update(overrides)
+    return RawResult(
+        data=payload,
+        meta={"page_url": "https://www.bilibili.com/video/BV1S1dPBYEG9/"},
     )
-    items = module.read_video("https://www.bilibili.com/video/BV1xx411c7mD", ctx=ctx)
+
+
+def _cues(*contents):
+    return RawResult(
+        data={
+            "body": [
+                {"from": float(index), "to": float(index + 1), "content": content}
+                for index, content in enumerate(contents)
+            ]
+        }
+    )
+
+
+def test_bilibili_subtitles_downloads_and_formats_cues():
+    parser = _load("bilibili", "parse.py")
+    ctx = HttpStub([("aisubtitle.hdslb.com", _cues("第一句", "第二句"))])
+
+    items = parser.subtitles(_bilibili_raw(), ctx=ctx)
+
     assert len(items) == 1
     item = items[0]
-    assert item["title"] == "【纪录片】示例视频"
+    assert item["title"] == "费曼的 47 本笔记"
+    assert item["url"] == "https://www.bilibili.com/video/BV1S1dPBYEG9/"
     assert item["author"] == "示例UP主"
     assert item["published_at"] == "2023-11-14T22:13:20Z"
-    assert "测试的视频简介" in item["text"]
-    assert "第一集" in item["text"]
-    assert item["raw"]["stats"]["view"] == 123456
-    assert item["raw"]["pages"] == 2
-    assert ctx.calls[0][1]["Cookie"] == "SESSDATA=secret; bili_jct=csrf"
-    assert "SESSDATA" not in json.dumps(items, ensure_ascii=False)
-
-
-def test_bilibili_read_video_maps_missing_video():
-    module = _load("bilibili", "read.py")
-    ctx = HttpStub(
-        [("/x/web-interface/view", RawResult(data={"code": -404, "message": "啥都木有"}))],
-        secrets={"BILIBILI_COOKIE": "SESSDATA=x"},
+    assert item["text"] == "第一句\n第二句"
+    assert item["raw"]["lan"] == "ai-zh"
+    assert item["raw"]["cues"] == 2
+    assert ctx.calls[0][0].startswith("https://aisubtitle.hdslb.com/")
+    assert (
+        ctx.calls[0][1]["Referer"]
+        == "https://www.bilibili.com/video/BV1S1dPBYEG9/"
     )
+    saved = item["raw"]["saved_files"]
+    assert len(saved) == 2
+    assert saved[0].endswith(".txt") and saved[1].endswith(".srt")
+    assert Path(saved[0]).read_text(encoding="utf-8").strip() == "第一句\n第二句"
+    assert "00:00:00,000 --> 00:00:01,000" in Path(saved[1]).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_bilibili_subtitles_label_multiple_languages():
+    parser = _load("bilibili", "parse.py")
+    ctx = HttpStub([("aisubtitle.hdslb.com", _cues("hello"))])
+    raw = _bilibili_raw(
+        track_count=2,
+        subtitles=[
+            {"lan": "ai-zh", "lan_doc": "中文", "url": "//aisubtitle.hdslb.com/zh.json"},
+            {"lan": "en-US", "lan_doc": "English", "url": "//aisubtitle.hdslb.com/en.json"},
+        ],
+    )
+
+    items = parser.subtitles(raw, ctx=ctx)
+
+    assert [item["title"] for item in items] == [
+        "费曼的 47 本笔记（中文）",
+        "费曼的 47 本笔记（English）",
+    ]
+
+
+def test_bilibili_subtitles_ignores_tracks_that_do_not_cover_the_video():
+    parser = _load("bilibili", "parse.py")
+    ctx = HttpStub(
+        [
+            (
+                "/short.json",
+                RawResult(data={"body": [{"from": 0, "to": 12, "content": "别的视频"}]}),
+            ),
+            (
+                "/full.json",
+                RawResult(
+                    data={
+                        "body": [
+                            {"from": 0, "to": 1132, "content": "1939年"},
+                            {"from": 1132, "to": 1133, "content": "结尾"},
+                        ]
+                    }
+                ),
+            ),
+            (
+                "/long.json",
+                RawResult(
+                    data={"body": [{"from": 0, "to": 3275, "content": "无关英文"}]}
+                ),
+            ),
+        ]
+    )
+    raw = _bilibili_raw(
+        duration=1133,
+        track_count=3,
+        subtitles=[
+            {"lan": "ai-zh", "lan_doc": "中文", "url": "//aisubtitle.hdslb.com/short.json"},
+            {"lan": "ai-zh", "lan_doc": "中文", "url": "//aisubtitle.hdslb.com/full.json"},
+            {"lan": "ai-zh", "lan_doc": "中文", "url": "//aisubtitle.hdslb.com/long.json"},
+        ],
+    )
+
+    items = parser.subtitles(raw, ctx=ctx)
+
+    assert len(items) == 1
+    assert items[0]["text"] == "1939年\n结尾"
+    assert items[0]["raw"]["coverage"] == 1.0
+
+
+def test_bilibili_subtitles_prefers_a_manual_track_over_the_ai_track():
+    parser = _load("bilibili", "parse.py")
+    ctx = HttpStub(
+        [
+            (
+                "/ai.json",
+                RawResult(data={"body": [{"from": 0, "to": 100, "content": "AI"}]}),
+            ),
+            (
+                "/manual.json",
+                RawResult(data={"body": [{"from": 0, "to": 100, "content": "人工"}]}),
+            ),
+        ]
+    )
+    raw = _bilibili_raw(
+        duration=100,
+        track_count=2,
+        subtitles=[
+            {"lan": "ai-zh", "lan_doc": "中文", "url": "//aisubtitle.hdslb.com/ai.json"},
+            {"lan": "zh-CN", "lan_doc": "中文（中国）", "url": "//aisubtitle.hdslb.com/manual.json"},
+        ],
+    )
+
+    items = parser.subtitles(raw, ctx=ctx)
+
+    assert len(items) == 1
+    assert items[0]["raw"]["lan"] == "zh-CN"
+    assert items[0]["text"] == "人工"
+
+
+def test_bilibili_subtitles_reports_missing_or_unissued_tracks():
+    parser = _load("bilibili", "parse.py")
+
     with pytest.raises(ReachError) as info:
-        module.read_video("https://www.bilibili.com/video/BV1xx411c7mD", ctx=ctx)
+        parser.subtitles(_bilibili_raw(track_count=0, subtitles=[]), ctx=HttpStub([]))
     assert info.value.code == NOT_FOUND
 
-
-def test_bilibili_read_skips_non_video_urls():
-    module = _load("bilibili", "read.py")
-    assert module.read_video("https://b23.tv/abc123", ctx=HttpStub([])) == []
-
-
-def test_bilibili_jina_parser_rejects_login_and_removed_pages():
-    parser = _load("bilibili", "parse.py")
-    target = "https://m.bilibili.com/video/BV1xx411c7mD"
-    login = RawResult(
-        text=(
-            "Title: 验证码_哔哩哔哩\n\nMarkdown Content:\n"
-            "扫描二维码登录\n密码登录\n短信登录"
-        ),
-        content_type="text/plain",
-        meta={"params": {"target": target}},
-    )
     with pytest.raises(ReachError) as info:
-        parser.jina(login)
+        parser.subtitles(_bilibili_raw(track_count=1, subtitles=[]), ctx=HttpStub([]))
     assert info.value.code == UPSTREAM_BROKEN
 
-    removed = RawResult(
-        text="Title: 视频去哪了呢？_哔哩哔哩\n\nMarkdown Content:\n页面不存在",
-        content_type="text/plain",
-        meta={"params": {"target": target}},
-    )
+
+def test_bilibili_subtitles_surfaces_browser_errors():
+    parser = _load("bilibili", "parse.py")
+
     with pytest.raises(ReachError) as info:
-        parser.jina(removed)
-    assert info.value.code == NOT_FOUND
+        parser.subtitles(
+            RawResult(data={"error": "Bilibili view API -400: bad bvid"}),
+            ctx=HttpStub([]),
+        )
+    assert info.value.code == UPSTREAM_BROKEN
+    assert "Bilibili view API -400" in info.value.message

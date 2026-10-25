@@ -11,7 +11,7 @@ from agent_reach.core.config import DEFAULT_ROUTING
 from agent_reach.core.doctor import build_doctor_report
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.registry import discover
-from agent_reach.core.result import NOT_FOUND, ReachError
+from agent_reach.core.result import NEED_SETUP, NOT_FOUND, ReachError
 from agent_reach.core.router import build_plan
 
 PLATFORMS = Path(__file__).resolve().parents[1] / "agent_reach" / "platforms"
@@ -181,50 +181,101 @@ def test_v2ex_read_uses_api_with_replies():
     assert "@Jay" in result["items"][0]["text"]
 
 
-def test_bilibili_read_skips_cookie_source_and_uses_jina():
-    registry = _registry()
-    http = HttpAdapterStub(
-        lambda call: RawResult(
-            text="Title: 示例视频\n\nMarkdown Content:\n# 视频正文\n内容",
-            content_type="text/plain",
-        )
-    )
-    result = run_action(
-        registry,
-        DEFAULT_ROUTING,
-        action="read",
-        params={"target": "https://www.bilibili.com/video/BV1xx411c7mD"},
-        ctx=FakeCtx(),
-        platform="bilibili",
-        adapters=_adapters(http),
-    )
-    assert result["ok"] is True
-    assert result["backend"] == "jina"
-    assert result["items"][0]["title"] == "示例视频"
-    assert "视频正文" in result["items"][0]["text"]
-    assert result["meta"]["attempts"][0]["result"] == "SKIP"
-    assert "BILIBILI_COOKIE" in result["meta"]["attempts"][0]["reason"]
+class DaemonAdapterStub:
+    kind = "daemon"
+
+    def __init__(self, data=None, *, ok=True, detail=None):
+        self.data = data or {}
+        self.ok = ok
+        self.detail = detail
+        self.calls = []
+
+    def probe(self):
+        return Health(ok=self.ok, detail=self.detail)
+
+    def invoke(self, call, *, ctx):
+        self.calls.append(call)
+        return RawResult(data=self.data)
 
 
-def test_bilibili_read_uses_cookie_source_when_configured():
+def _bilibili_adapters(daemon, http):
+    return {"daemon": daemon, "http": http, "builtin": BuiltinAdapter()}
+
+
+def test_bilibili_read_downloads_subtitles_through_the_browser(monkeypatch, tmp_path):
+    monkeypatch.setenv("REACH_RAW_DIR", str(tmp_path / "_raw"))
     registry = _registry()
+    daemon = DaemonAdapterStub(
+        {
+            "title": "【纪录片】示例视频",
+            "owner": "示例UP主",
+            "pubdate": 1700000000,
+            "duration": 61,
+            "bvid": "BV1S1dPBYEG9",
+            "cid": 38164562135,
+            "track_count": 1,
+            "subtitles": [
+                {
+                    "lan": "ai-zh",
+                    "lan_doc": "中文",
+                    "url": "//aisubtitle.hdslb.com/bfs/ai_subtitle/demo.json",
+                }
+            ],
+        }
+    )
     ctx = FakeCtx(
-        [("/x/web-interface/view", RawResult(data=_fixture("bilibili", "view.json")))],
-        secrets={"BILIBILI_COOKIE": "SESSDATA=cookie-secret"},
+        [
+            (
+                "aisubtitle.hdslb.com",
+                RawResult(
+                    data={"body": [{"from": 0.0, "to": 2.0, "content": "第一句"}]}
+                ),
+            )
+        ]
     )
+
     result = run_action(
         registry,
         DEFAULT_ROUTING,
         action="read",
-        params={"target": "https://www.bilibili.com/video/BV1xx411c7mD"},
+        params={"target": "https://www.bilibili.com/video/BV1S1dPBYEG9"},
         ctx=ctx,
         platform="bilibili",
-        adapters=_adapters(HttpAdapterStub(lambda call: RawResult())),
+        adapters=_bilibili_adapters(daemon, HttpAdapterStub(lambda call: RawResult())),
     )
+
     assert result["ok"] is True
-    assert result["backend"] == "bilibili-api"
+    assert result["backend"] == "kimi-browser"
     assert result["items"][0]["title"] == "【纪录片】示例视频"
-    assert "SESSDATA" not in json.dumps(result, ensure_ascii=False)
+    assert result["items"][0]["text"] == "第一句"
+    assert result["items"][0]["raw"]["lan"] == "ai-zh"
+    assert len(result["items"][0]["raw"]["saved_files"]) == 2
+    assert (tmp_path / "_raw").is_dir()
+    assert daemon.calls[0].call == "browse"
+    assert daemon.calls[0].args["url"] == "https://www.bilibili.com/video/BV1S1dPBYEG9"
+
+
+def test_bilibili_read_skips_the_browser_source_when_the_daemon_is_down():
+    registry = _registry()
+    daemon = DaemonAdapterStub(
+        ok=False, detail="kimi-webbridge daemon is not reachable"
+    )
+
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={"target": "https://www.bilibili.com/video/BV1S1dPBYEG9"},
+        ctx=FakeCtx(),
+        platform="bilibili",
+        adapters=_bilibili_adapters(daemon, HttpAdapterStub(lambda call: RawResult())),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == NEED_SETUP
+    assert result["meta"]["attempts"][0]["result"] == "SKIP"
+    assert "kimi-webbridge" in result["meta"]["attempts"][0]["reason"]
+    assert daemon.calls == []
 
 
 def test_doctor_reports_optional_auth_secret_without_leaking_values():
@@ -234,14 +285,11 @@ def test_doctor_reports_optional_auth_secret_without_leaking_values():
         registry, ctx=ctx, adapters=build_adapters(context=ctx)
     )
     rows = {row["id"]: row for row in report["platforms"]}
-    for platform_id, secret in (
-        ("github", "GITHUB_TOKEN"),
-        ("bilibili", "BILIBILI_COOKIE"),
-    ):
-        auth = rows[platform_id]["auth"]
-        assert auth["configured"] is False
-        assert secret in auth["detail"]
-        assert rows[platform_id]["status"] == "ok"
+    auth = rows["github"]["auth"]
+    assert auth["configured"] is False
+    assert "GITHUB_TOKEN" in auth["detail"]
+    assert rows["github"]["status"] == "ok"
+    assert rows["bilibili"]["auth"]["detail"] == "no login required"
     assert "SESSDATA" not in json.dumps(report, ensure_ascii=False)
 
 
