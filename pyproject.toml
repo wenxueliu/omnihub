@@ -22,6 +22,7 @@ dev = ["pytest>=7.0"]
 [project.scripts]
 reach-platforms = "agent_reach.cli:main"
 agent-reach = "agent_reach.cli:main"
+xiaohongshu-cli = "agent_reach.xiaohongshu_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_reach"]

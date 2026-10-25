@@ -84,6 +84,25 @@ pip install -e .
 reach-platforms platforms --text
 ```
 
+### 小红书 kimi-webbridge CLI
+
+除了平台化的 `search/read`，仓库还提供了一个可独立使用的小红书 CLI。它在
+用户已登录的真实浏览器里执行搜索、捕获笔记的 `xsec_token`、再读取正文，
+并提供作者主页兜底与 token 缓存：
+
+```bash
+# 安装后使用 xiaohongshu-cli；未安装则用 python -m
+python -m agent_reach.xiaohongshu_cli login-status
+python -m agent_reach.xiaohongshu_cli search "西安 红叶" --limit 5
+python -m agent_reach.xiaohongshu_cli read 6addcd87000000002c00cb5a
+python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
+```
+
+输出统一为 `{"ok": true, "data": ...}`，错误时为
+`{"ok": false, "error": {"code", "message"}}` 并以非零码退出。token 缓存在
+`$XDG_CACHE_HOME/xiaohongshu-cli/notes.json`（0600，不保存查询词）。使用说明
+见 [`skill/xiaohongshu-cli/SKILL.md`](skill/xiaohongshu-cli/SKILL.md)。
+
 `web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
@@ -126,6 +145,7 @@ reach-platforms platforms --text
 ```
 agent_reach/
   cli.py                 # platforms / doctor / explain / check / cooldowns / search / read
+  xiaohongshu_cli.py     # kimi-webbridge 小红书 CLI（login-status / search / read）
   core/
     config.py            # 分层 routing 配置
     context.py           # 子进程、HTTP、secret；超时/输出上限
