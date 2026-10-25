@@ -3,6 +3,7 @@ description: Bilibili video search and page reads, with an optional cookie-backe
 version: 1
 level: default
 priority: 110
+capabilities: [http]
 domains:
   - bilibili.com
   - www.bilibili.com

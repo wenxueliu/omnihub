@@ -3,6 +3,7 @@ description: GitHub repository search and repository / issue / pull-request read
 version: 1
 level: default
 priority: 100
+capabilities: [http]
 domains:
   - github.com
   - api.github.com

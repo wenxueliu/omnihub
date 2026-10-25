@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
 
@@ -26,6 +26,8 @@ BUILTIN_PLATFORM_DIR = PACKAGE_DIR / "platforms"
 BUILTIN_TOOL_DIR = PACKAGE_DIR / "tools"
 SCHEMA_DIR = Path(__file__).resolve().parent / "schema"
 MANIFEST_NAME = "platform.yaml"
+CODE_HOOKS = ("search.py", "read.py", "parse.py")
+TRUST_ENV = "REACH_TRUSTED_PLUGINS"
 
 _SCHEMA_CACHE: dict[str, Draft202012Validator] = {}
 
@@ -89,16 +91,23 @@ class PlatformManifest:
     level: str = "default"
     priority: int = 1000
     domains: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
     public_web: Any = False
     requires: Mapping[str, Any] = field(default_factory=dict)
     auth: Mapping[str, Any] = field(default_factory=dict)
     actions: Mapping[str, Action] = field(default_factory=dict)
     path: Path = Path()
     origin: str = "unknown"
+    trusted: bool = False
     manifest: Mapping[str, Any] = field(default_factory=dict)
 
     def supports(self, action: Optional[str]) -> bool:
         return action is None or action in self.actions
+
+    @property
+    def code_hooks(self) -> tuple[str, ...]:
+        directory = self.path.parent
+        return tuple(name for name in CODE_HOOKS if (directory / name).is_file())
 
 
 @dataclass
@@ -191,6 +200,7 @@ def _parse_platform(data: Mapping[str, Any], manifest_path: Path, origin: str) -
         level=str(data.get("level", "default")),
         priority=int(data.get("priority", 1000)),
         domains=tuple(str(domain) for domain in data.get("domains") or ()),
+        capabilities=tuple(str(capability) for capability in data.get("capabilities") or ()),
         public_web=platform_public_web,
         requires=dict(data.get("requires") or {}),
         auth=dict(data.get("auth") or {}),
@@ -216,6 +226,38 @@ def _check_references(data: Mapping[str, Any], manifest_path: Path) -> None:
             raise ManifestError(
                 manifest_path, f"requires.adapters: unknown adapter {adapter!r}"
             )
+
+
+def _check_code_hooks(
+    data: Mapping[str, Any], manifest_path: Path, origin: str
+) -> None:
+    """Third-party code hooks must declare what they are allowed to touch.
+
+    Declarative plugins are safe to load. Python hooks run with the user's
+    privileges, so a plugin that ships one has to say up front whether it
+    needs ``http``, ``exec`` or ``browser`` -- and the user still has to trust
+    the plugin id before anything is executed.
+    """
+    if origin != "plugin":
+        return
+    hooks = [name for name in CODE_HOOKS if (manifest_path.parent / name).is_file()]
+    if hooks and "capabilities" not in data:
+        raise ManifestError(
+            manifest_path,
+            f"plugin ships Python hooks ({', '.join(hooks)}) but declares no "
+            "capabilities; add `capabilities: []` or list http/exec/browser",
+        )
+
+
+def default_trusted_plugins(environ: Optional[Mapping[str, str]] = None) -> frozenset[str]:
+    """Plugin ids explicitly trusted through ``REACH_TRUSTED_PLUGINS``."""
+    source = os.environ if environ is None else environ
+    raw = source.get(TRUST_ENV, "")
+    return frozenset(
+        entry.strip()
+        for entry in raw.replace(os.pathsep, ",").split(",")
+        if entry.strip()
+    )
 
 
 def load_platform(path: Path | str, *, origin: str = "unknown") -> PlatformManifest:
@@ -245,6 +287,7 @@ def load_platform(path: Path | str, *, origin: str = "unknown") -> PlatformManif
         )
 
     _check_references(data, manifest_path)
+    _check_code_hooks(data, manifest_path, origin)
     return _parse_platform(data, manifest_path, origin)
 
 
@@ -296,6 +339,7 @@ def discover(
     *,
     plugin_dirs: Optional[Iterable[Path | str]] = None,
     include_builtin: bool = True,
+    trusted_plugins: Optional[Iterable[str]] = None,
     strict: bool = False,
 ) -> Registry:
     """Scan built-in and plugin directories.
@@ -351,6 +395,15 @@ def discover(
     for platform_id in missing:
         platforms.pop(platform_id, None)
 
+    trusted = (
+        frozenset(trusted_plugins)
+        if trusted_plugins is not None
+        else default_trusted_plugins()
+    )
+    for platform_id, platform in list(platforms.items()):
+        if platform.origin == "builtin" or platform_id in trusted:
+            platforms[platform_id] = replace(platform, trusted=True)
+
     registry = Registry(platforms=platforms, errors=errors, tools=discover_tools())
     if strict and errors:
         raise RegistryError(errors)
@@ -391,8 +444,12 @@ def _catalog_entry(platform: PlatformManifest) -> dict:
         "level": platform.level,
         "priority": platform.priority,
         "domains": list(platform.domains),
+        "capabilities": list(platform.capabilities),
         "public_web": platform.public_web,
         "requires": dict(platform.requires),
+        "origin": platform.origin,
+        "trusted": platform.trusted,
+        "code_hooks": list(platform.code_hooks),
         "actions": {
             name: {
                 "params": dict(action.params),
@@ -406,6 +463,7 @@ def _catalog_entry(platform: PlatformManifest) -> dict:
                         "call": source.call,
                         "priority": source.priority,
                         "parse": list(source.parse),
+                        "when": source.when,
                         "disabled": source.disabled,
                     }
                     for source in action.sources

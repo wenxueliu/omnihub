@@ -2,12 +2,13 @@
 
 配置驱动、按平台组织的 Agent 互联网访问层。
 
-当前完成 **M3**：M0 契约层（目录发现、manifest 校验、两级优先级路由）+
-M1 执行层（HTTP/CLI/OpenCLI 适配器、`web` 公共网页平台）+ M2 平台批次一
-（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
-（kimi-webbridge `daemon` 适配器、`search --enrich N`）。CLI 已支持
-`platforms`、`doctor`、`explain`、`search` 和 `read`。MCP/浏览器适配器与
-后续平台批次详见 `docs/implementation.md`。
+当前完成 **M3** 并进入 **M4**：M0 契约层（目录发现、manifest 校验、两级
+优先级路由）+ M1 执行层（HTTP/CLI/OpenCLI 适配器、`web` 公共网页平台）+
+M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
+（kimi-webbridge `daemon` 适配器、`search --enrich N`）+ M4 插件校验与
+信任、`explain` 来源明细、`SKILL.md` 生成。CLI 已支持 `platforms`、
+`doctor`、`explain`、`plugin`、`skill`、`search` 和 `read`。剩余平台迁移、
+MCP/浏览器适配器详见 `docs/implementation.md`。
 
 ## 快速开始
 
@@ -39,6 +40,11 @@ python -m agent_reach.cli read https://www.bilibili.com/video/BV1rpWjevEip --tex
 
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
 python -m agent_reach.cli doctor --text
+
+# 第三方插件：只校验、不执行；生成给 Agent 用的 SKILL.md
+python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
+python -m agent_reach.cli plugin list --text
+python -m agent_reach.cli skill --output SKILL.md
 
 # 离线契约示例平台
 python -m agent_reach.cli search hello --platform noop --limit 2 --text
@@ -79,6 +85,8 @@ agent_reach/
     schema/              # JSON Schema
     template.py          # ${param} / ${secret:NAME} / 过滤器模板
     enrich.py            # search --enrich N：并发补正文、失败隔离
+    plugins.py           # 第三方插件校验（不执行代码）
+    skill.py             # 由 registry 生成 SKILL.md
   adapters/
     base.py              # Adapter / ToolCall / RawResult 协议
     builtin.py           # 平台目录内可信 Python hooks
@@ -134,6 +142,25 @@ actions:
 `adapter:daemon` 表示“该适配器的健康探针通过才运行”，例如 `web` 的
 kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭据”，缺失时
 `doctor` 提示但仍使用公共来源；`requires.secrets` 则表示必需凭据。
+
+### 第三方插件
+
+插件放在 `$REACH_PLUGIN_PATH`、`~/.agent-reach/plugins/<id>/` 或
+`./.agent-reach/plugins/<id>/`，同名覆盖内置平台。纯清单插件直接加载；
+带 `search.py` / `read.py` / `parse.py` 的插件是在用户权限下执行 Python，
+因此必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写 `[]`）
+并且显式信任：
+
+```bash
+python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
+python -m agent_reach.cli search "query" --trust-plugin my-plugin
+# 或 REACH_TRUSTED_PLUGINS=my-plugin
+```
+
+未信任时插件仍会出现在 `platforms` 里，但运行其代码会返回 `NEED_SETUP`；
+`plugin validate` 会给出提醒。`explain` 会列出每个平台的来源顺序、
+`adapter`、`when` 与 `parse`，`skill` 从 registry 生成文档，两者都不会
+输出凭据或来源 `args`。
 
 ## 路由配置
 

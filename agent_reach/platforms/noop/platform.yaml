@@ -3,6 +3,7 @@ description: Minimal built-in platform used by M0 contract tests.
 version: 1
 level: experimental
 priority: 999
+capabilities: []
 domains:
   - example.com
 public_web: false

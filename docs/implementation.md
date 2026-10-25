@@ -581,7 +581,7 @@ requires:
 - **凭据**：`ctx.secret(key)`；日志与错误消息脱敏；不把 Cookie/Token 放进 `raw`。
 - **限流**：沿用 channel 级 cooldown、backend 级 pause；平台 manifest 可声明最小间隔。
 - **daemon**：只允许 loopback；校验地址来自本地配置文件；不对外暴露。
-- **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust`，并声明所需能力（`http` / `exec` / `browser`）。
+- **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust-plugin <id>`（或 `REACH_TRUSTED_PLUGINS`），并声明所需能力（`http` / `exec` / `browser`）。
 
 ---
 
@@ -832,18 +832,40 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 ### M4 — 全量迁移与插件
 
-**交付物**
+**状态：插件部分已完成（2026-10-25），`python -m pytest -q` 197 项通过**；
+剩余平台迁移仍待进行。
 
-- 剩余平台迁成目录包；删除静态 registry 与旧 channel 类
-- `~/.agent-reach/plugins/` 发现 + `agent-reach plugin validate`
-- `agent-reach explain`：解释路由与来源
-- SKILL.md 由 registry 自动生成
+**已完成**
 
-**验收**
+- 插件发现：`$REACH_PLUGIN_PATH`、`~/.agent-reach/plugins/`、
+  `./.agent-reach/plugins/`，同名覆盖内置；删除目录即下线。
+- `plugin validate [PATH...]` / `plugin list`：只校验不执行；检查 schema、
+  目录名与 id、跨文件引用、Python hooks 与能力声明，输出 errors/warnings。
+- 插件信任：纯清单插件直接加载；带 `search.py` / `read.py` / `parse.py`
+  的插件必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写
+  `[]`），并在 `--trust-plugin <id>` 或 `REACH_TRUSTED_PLUGINS` 后才执行。
+  未信任时平台仍可被发现，运行时返回 `NEED_SETUP`。
+- `explain` 增加 `platforms[]`：按计划顺序列出平台来源的 adapter、name、
+  priority、`when`、`parse`、`disabled`；`--text` 同步展示。
+- `skill [--output FILE]`：从 registry 生成 SKILL.md（命令、平台表、每个
+  平台的参数与来源顺序），不包含凭据与来源 `args`。
 
-- 第三方平台不改核心即可加入。
-- `agent-reach platforms` 列出所有能力与优先级。
-- 删除一个平台包后，能力表自动更新。
+**待完成**
+
+- 剩余平台迁成目录包（参考 `reference/Agent-Reach/agent_reach/channels/`：
+  reddit、youtube、twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin、
+  facebook、instagram、boss 等；多数依赖登录或浏览器，需要先确认可用
+  来源）。
+- 删除静态 registry 与旧 channel 类（本仓库已无旧 channel 类，此条只对
+  上游迁移过程有意义）。
+
+**验收结果**
+
+- 第三方声明式平台不改核心即可加入；带代码插件显式信任后端到端可运行。
+- `platforms` / `skill` 的能力表随目录增删自动变化。
+- 测试覆盖：hooks 缺能力声明被拒、环境变量/参数信任、未信任时拒绝执行、
+  `plugin validate` 的 errors/warnings/缺失路径、explain 来源、skill 输出
+  不含 secret。
 
 ### M5 — 加固与发布
 
@@ -887,7 +909,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 各平台重复实现工具调用 | 共享 adapters；平台只声明 `adapter/tool/args` |
 | 有状态工具（kimi/opencli）与一次性模型不匹配 | `daemon` 适配器支持 session/cursor；核心管道保持无状态 |
 | 子进程输出无上限 | 给 `run_cmd` 增加 `max_output_bytes` |
-| 插件执行任意代码 | 纯清单默认安全；代码插件显式 `--trust` + 能力声明 |
+| 插件执行任意代码 | 纯清单默认安全；代码插件显式 `--trust-plugin` + 能力声明 |
 | 聚合模式放大限流/反爬 | 默认 `first_success`；聚合限制 top K 与并发 |
 | 迁移期间两套模型并存 | `LegacyChannelAdapter` + 平台级开关，逐个切换 |
 

@@ -36,6 +36,14 @@
       },
       "uniqueItems": true
     },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["http", "exec", "browser"]
+      },
+      "uniqueItems": true
+    },
     "public_web": {
       "$ref": "#/$defs/public_web"
     },

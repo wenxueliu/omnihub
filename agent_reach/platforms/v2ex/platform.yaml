@@ -3,6 +3,7 @@ description: V2EX topic search (SOV2EX) and topic reads with replies.
 version: 1
 level: default
 priority: 120
+capabilities: [http]
 domains:
   - v2ex.com
   - www.v2ex.com

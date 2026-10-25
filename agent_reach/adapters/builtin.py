@@ -48,10 +48,13 @@ class BuiltinAdapter:
         platform_path = call.raw.get("platform_path")
         platform_id = call.raw.get("platform_id") or "platform"
         origin = call.raw.get("platform_origin")
-        if origin != "builtin":
+        trusted = call.raw.get("platform_trusted") is True
+        if origin != "builtin" and not trusted:
             raise ReachError(
                 NEED_SETUP,
-                "third-party platform Python hooks require an explicit trust flag (not available yet)",
+                f"third-party platform {platform_id!r} ships Python hooks but is not "
+                f"trusted; add `--trust-plugin {platform_id}` or set "
+                "REACH_TRUSTED_PLUGINS",
             )
         if not platform_path:
             raise ReachError(NEED_SETUP, "platform path missing from builtin call")

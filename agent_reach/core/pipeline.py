@@ -128,8 +128,8 @@ def prepare_params(
 
 
 def load_platform_module(platform: PlatformManifest, filename: str) -> Optional[Any]:
-    """Load a trusted built-in platform module, or return None."""
-    if platform.origin != "builtin":
+    """Load a trusted platform module, or return None."""
+    if not platform.trusted:
         return None
     path = platform.path.parent / filename
     if not path.is_file():
@@ -198,6 +198,7 @@ def _build_call(
             "platform_id": platform.id,
             "platform_path": str(platform.path.parent),
             "platform_origin": platform.origin,
+            "platform_trusted": platform.trusted,
             "source_name": source_label(source),
             "source": raw,
         },
