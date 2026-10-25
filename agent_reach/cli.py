@@ -379,19 +379,40 @@ def _cmd_skill(args: argparse.Namespace) -> int:
     return 0 if not registry.errors else 2
 
 
+def _check_cooldown(payload: dict) -> Optional[float]:
+    """Return the pause length when a check never left the local ledger.
+
+    A check whose attempts were all skipped was not run at all, so it is not
+    an upstream regression. A 429 from the network still has a RUN attempt and
+    stays a failure.
+    """
+    error = payload.get("error") or {}
+    retry = error.get("retry_after_seconds")
+    if retry is None:
+        return None
+    attempts = (payload.get("meta") or {}).get("attempts") or []
+    if not attempts or any(item.get("result") != "SKIP" for item in attempts):
+        return None
+    return float(retry)
+
+
 def _check_text(payload: dict) -> None:
     for check in payload.get("checks") or []:
         state = check.get("status") or ("ok" if check.get("ok") else "failed")
+        retry = check.get("retry_after_seconds")
+        suffix = f"  retry in {retry:.0f}s" if retry is not None else ""
         print(
             f"{check['platform']:<20} {check['action']:<7} {state:<8} "
             f"{check.get('backend') or '-':<14} {check.get('elapsed_ms', '-')}ms"
+            f"{suffix}"
         )
         error = check.get("error") or {}
-        if error:
+        if error and state == "failed":
             print(f"  {error.get('code')}: {error.get('message')}", file=sys.stderr)
     meta = payload.get("meta") or {}
     print(
         f"{meta.get('count', 0)} check(s), {meta.get('failed', 0)} failed, "
+        f"{meta.get('cooling', 0)} cooling, "
         f"{meta.get('skipped', 0)} platform(s) without check",
         file=sys.stderr,
     )
@@ -481,21 +502,28 @@ def _cmd_check(args: argparse.Namespace) -> int:
                 platform=platform.id,
             )
             error = payload.get("error") or {}
-            checks.append(
-                {
-                    "platform": platform.id,
-                    "action": action_name,
-                    "params": params,
-                    "status": "ok" if payload.get("ok") else "failed",
-                    "ok": bool(payload.get("ok")),
-                    "backend": payload.get("backend"),
-                    "items": len(payload.get("items") or []),
-                    "elapsed_ms": int((time.monotonic() - started) * 1000),
-                    "error": error or None,
-                }
-            )
+            cooling = _check_cooldown(payload)
+            check = {
+                "platform": platform.id,
+                "action": action_name,
+                "params": params,
+                "status": (
+                    "ok"
+                    if payload.get("ok")
+                    else ("cooling" if cooling is not None else "failed")
+                ),
+                "ok": True if payload.get("ok") else (None if cooling else False),
+                "backend": payload.get("backend"),
+                "items": len(payload.get("items") or []),
+                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                "error": error or None,
+            }
+            if cooling is not None:
+                check["retry_after_seconds"] = cooling
+            checks.append(check)
 
     failed = sum(1 for check in checks if check.get("ok") is False)
+    cooling_count = sum(1 for check in checks if check.get("status") == "cooling")
     ok = failed == 0
     result = {
         "schema_version": 1,
@@ -505,6 +533,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
         "meta": {
             "count": len(checks),
             "failed": failed,
+            "cooling": cooling_count,
             "skipped": skipped,
             "dry_run": bool(args.dry_run),
         },

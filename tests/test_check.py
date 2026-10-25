@@ -40,7 +40,13 @@ def test_check_dry_run_does_not_touch_the_network(monkeypatch, capsys):
     assert main(["check", "--dry-run", "--platform", "github"]) == 0
     payload, _ = _payload(capsys)
     assert payload["ok"] is True
-    assert payload["meta"] == {"count": 2, "failed": 0, "skipped": 0, "dry_run": True}
+    assert payload["meta"] == {
+        "count": 2,
+        "failed": 0,
+        "cooling": 0,
+        "skipped": 0,
+        "dry_run": True,
+    }
     assert [item["action"] for item in payload["checks"]] == ["search", "read"]
     assert all(item["status"] == "planned" for item in payload["checks"])
     assert payload["checks"][0]["params"]["query"] == "flask"
@@ -54,7 +60,13 @@ def test_check_platform_filter_and_skipped_count(capsys):
 
     assert main(["check", "--dry-run", "--platform", "noop"]) == 0
     payload, _ = _payload(capsys)
-    assert payload["meta"] == {"count": 0, "failed": 0, "skipped": 1, "dry_run": True}
+    assert payload["meta"] == {
+        "count": 0,
+        "failed": 0,
+        "cooling": 0,
+        "skipped": 1,
+        "dry_run": True,
+    }
 
 
 def test_check_unknown_platform_is_bad_input(capsys):
@@ -105,6 +117,77 @@ def test_check_aggregates_live_results(monkeypatch, capsys):
         ("github", "search", {"query": "flask", "limit": 1}),
         ("v2ex", "search", {"query": "python", "limit": 1}),
     ]
+
+
+def _cooldown_payload(*, attempts=None):
+    return {
+        "ok": False,
+        "error": {
+            "code": "RATE_LIMITED",
+            "message": "platform is cooling down",
+            "retry_after_seconds": 42.0,
+        },
+        "meta": {
+            "attempts": (
+                [
+                    {
+                        "platform": "github",
+                        "backend": None,
+                        "result": "SKIP",
+                        "reason": "platform cooldown (RATE_LIMITED)",
+                        "retry_after_seconds": 42.0,
+                    }
+                ]
+                if attempts is None
+                else attempts
+            )
+        },
+    }
+
+
+def test_check_marks_ledger_skips_as_cooling(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "run_action", lambda *args, **kwargs: _cooldown_payload())
+    assert main(["check", "--platform", "github", "--action", "search"]) == 0
+    payload, _ = _payload(capsys)
+    check = payload["checks"][0]
+    assert check["status"] == "cooling"
+    assert check["ok"] is None
+    assert check["retry_after_seconds"] == 42.0
+    assert payload["meta"]["cooling"] == 1
+    assert payload["meta"]["failed"] == 0
+    assert payload["ok"] is True
+    assert payload["error"] is None
+
+
+def test_check_keeps_a_network_rate_limit_as_failure(monkeypatch, capsys):
+    attempts = [
+        {
+            "platform": "github",
+            "backend": "github-api",
+            "result": "RUN",
+            "retry_after_seconds": 42.0,
+        }
+    ]
+    monkeypatch.setattr(
+        cli, "run_action", lambda *args, **kwargs: _cooldown_payload(attempts=attempts)
+    )
+    assert main(["check", "--platform", "github", "--action", "search"]) == 1
+    payload, _ = _payload(capsys)
+    check = payload["checks"][0]
+    assert check["status"] == "failed"
+    assert check["ok"] is False
+    assert "retry_after_seconds" not in check
+    assert payload["meta"]["cooling"] == 0
+    assert payload["meta"]["failed"] == 1
+
+
+def test_check_text_marks_cooling_with_retry_hint(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "run_action", lambda *args, **kwargs: _cooldown_payload())
+    assert main(["check", "--platform", "github", "--action", "search", "--text"]) == 0
+    captured = capsys.readouterr()
+    assert "cooling" in captured.out
+    assert "retry in 42s" in captured.out
+    assert "0 failed, 1 cooling" in captured.err
 
 
 def test_check_filters_actions_that_are_not_declared(

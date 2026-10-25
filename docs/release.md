@@ -11,13 +11,13 @@
 
 ```bash
 python -m pytest -q
-# 253 tests
+# 256 tests
 ```
 
 覆盖：schema 与 manifest 契约、目录删除隔离、路由与聚合、模板与解析器、
-HTTP/CLI/OpenCLI/daemon/builtin 适配器、`check` 聚合、插件信任、冷却账本
-（查询 / 清除 / pacing）、`Retry-After` 解析、真实 loopback HTTP server 与
-fake binary。
+HTTP/CLI/OpenCLI/daemon/builtin 适配器、`check` 聚合与 cooling/failed 区分、
+插件信任、冷却账本（查询 / 清除 / pacing）、`Retry-After` 解析、真实
+loopback HTTP server 与 fake binary。
 
 安全相关用例：
 
@@ -85,7 +85,8 @@ python -m agent_reach.cli check --timeout 60 --text
   `PLATFORM_BLOCKED`、`NEED_LOGIN`、`NOT_FOUND`、`BAD_INPUT`、`BUSY` 停止。
 - **冷却**：平台级 300s/900s（`Retry-After` 优先，上限 6h），来源级
   60/120/60s；命中时 attempt 为 `SKIP` 并带 `retry_after_seconds`。
-  `doctor` 将未过期条目显示为 `cooling`，`cooldowns` 可列出或显式重置。
+  `doctor` 将未过期条目显示为 `cooling`，`cooldowns` 可列出或显式重置；
+  `check` 对账本跳过的项报告 `cooling` 而不是失败。
 - **插件**：声明式插件直接加载；带 Python hooks 的插件必须声明
   `capabilities` 并显式信任。
 - **输出**：`schema_version: 1` envelope；`error.retry_after_seconds` 仅在

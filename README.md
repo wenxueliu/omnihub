@@ -203,7 +203,9 @@ python -m agent_reach.cli search "query" --trust-plugin my-plugin
 
 `doctor` 会在对应平台下输出 `cooling` 行；`cooldowns` 命令列出全部未过期
 条目，`cooldowns reset [--platform ID]` 在确认上游已恢复后显式清除。重置
-不影响 `min_interval` 的 pacing 时间戳，也不会自动绕过限流。
+不影响 `min_interval` 的 pacing 时间戳，也不会自动绕过限流。`check` 把只被
+账本跳过（没有真正发起调用）的项标为 `cooling`，不计入失败；网络返回的
+429 仍记为失败。
 
 平台可在来源上声明 `min_interval`（秒），用于连续调用同一来源时的最小
 间隔；核心把它限制在 10s 以内，超出的部分只会等待，不会报错：

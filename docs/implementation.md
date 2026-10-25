@@ -945,9 +945,13 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - 新命令 `cooldowns [list|reset] [--platform ID]...`：默认列出账本；`reset`
   清除全部或指定平台，输出 `meta.cleared` 与清除后仍生效的条目；未知平台
   以 `BAD_INPUT` 退出 2。重置是显式操作，不会自动绕过限流。
-- **验收结果**：`python -m pytest -q` 253 项通过；覆盖 active 排序与过期
+- `check` 区分“未运行”和“失败”：所有 attempt 都是账本 `SKIP` 且错误带
+  `retry_after_seconds` 时，检查记为 `status: cooling`、`ok: null`、附
+  `retry_after_seconds`，不计入 `failed`，`meta.cooling` 单独统计；来自网络
+  的真实 429 仍有 `RUN` attempt，保持 `failed`。
+- **验收结果**：`python -m pytest -q` 256 项通过；覆盖 active 排序与过期
   过滤、按平台/全部清除、pacing 保留、空账本不落盘、CLI list/reset 与未知
-  平台、doctor 冷却展示。
+  平台、doctor 冷却展示、check 的 cooling/failed 区分。
 
 ### M5 — 加固与发布
 
@@ -1037,5 +1041,3 @@ M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷
 - 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
   linkedin、facebook、instagram、boss）先确认可用来源，再按平台目录迁移。
 - 已声明但未实现的 `mcp` / `browser` 适配器。
-- 可选：把 `active()` 的冷却信息并入 `check` 输出，便于 CI 直接看到
-  “因冷却跳过”与“真实失败”的区别。
