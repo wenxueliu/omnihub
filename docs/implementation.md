@@ -1015,7 +1015,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却也已完成。剩余：
 
-- 文档迁移指南与发布验收。
+- 迁移指南与发布验收已写入 `docs/migration.md` 与 `docs/release.md`。
 - 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
   linkedin、facebook、instagram、boss）先确认可用来源，再按平台目录迁移。
 - 适配器测试补齐 fake binary / 本地 fake HTTP server 的边界用例。
