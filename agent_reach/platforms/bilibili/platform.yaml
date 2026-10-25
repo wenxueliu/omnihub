@@ -4,6 +4,11 @@ version: 1
 level: default
 priority: 110
 capabilities: [http]
+
+check:
+  search: {query: "python", limit: 1}
+  read: {target: "https://www.bilibili.com/video/BV1rpWjevEip"}
+
 domains:
   - bilibili.com
   - www.bilibili.com

@@ -47,6 +47,14 @@
     "public_web": {
       "$ref": "#/$defs/public_web"
     },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "search": {"type": "object"},
+        "read": {"type": "object"}
+      }
+    },
     "requires": {
       "type": "object",
       "additionalProperties": false,

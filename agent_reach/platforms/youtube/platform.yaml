@@ -4,6 +4,11 @@ version: 1
 level: default
 priority: 140
 capabilities: []
+
+check:
+  search: {query: "asyncio tutorial", limit: 1}
+  read: {target: "https://www.youtube.com/watch?v=oAkLSJNr5zY"}
+
 domains:
   - youtube.com
   - www.youtube.com

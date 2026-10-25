@@ -4,6 +4,11 @@ version: 1
 level: default
 priority: 120
 capabilities: [http]
+
+check:
+  search: {query: "python", limit: 1}
+  read: {target: "https://www.v2ex.com/t/1"}
+
 domains:
   - v2ex.com
   - www.v2ex.com

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -366,6 +367,147 @@ def _cmd_skill(args: argparse.Namespace) -> int:
     return 0 if not registry.errors else 2
 
 
+def _check_text(payload: dict) -> None:
+    for check in payload.get("checks") or []:
+        state = check.get("status") or ("ok" if check.get("ok") else "failed")
+        print(
+            f"{check['platform']:<20} {check['action']:<7} {state:<8} "
+            f"{check.get('backend') or '-':<14} {check.get('elapsed_ms', '-')}ms"
+        )
+        error = check.get("error") or {}
+        if error:
+            print(f"  {error.get('code')}: {error.get('message')}", file=sys.stderr)
+    meta = payload.get("meta") or {}
+    print(
+        f"{meta.get('count', 0)} check(s), {meta.get('failed', 0)} failed, "
+        f"{meta.get('skipped', 0)} platform(s) without check",
+        file=sys.stderr,
+    )
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    try:
+        routing = load_routing(path=args.routing)
+    except ConfigError as exc:
+        _emit(
+            _error_payload(BAD_INPUT, str(exc)),
+            text=args.text,
+            render_text=lambda payload: print(payload["error"]["message"], file=sys.stderr),
+        )
+        return 2
+    registry = _discover(args)
+    if registry.errors:
+        payload = _error_payload(
+            BAD_INPUT,
+            f"{len(registry.errors)} invalid platform manifest(s)",
+            hint="Run `reach-platforms platforms` for details.",
+        )
+        _emit(payload, text=args.text, render_text=_check_text)
+        return 2
+
+    if args.platform:
+        platforms = []
+        for platform_id in args.platform:
+            platform = registry.platforms.get(platform_id)
+            if platform is None:
+                _emit(
+                    _error_payload(
+                        BAD_INPUT,
+                        f"unknown platform {platform_id!r}",
+                        hint="Run `reach-platforms platforms` for the available ids.",
+                    ),
+                    text=args.text,
+                    render_text=_check_text,
+                )
+                return 2
+            platforms.append(platform)
+    else:
+        platforms = sorted(
+            registry.platforms.values(), key=lambda item: (item.priority, item.id)
+        )
+
+    checks: list[dict] = []
+    skipped = 0
+    try:
+        context = None if args.dry_run else Context(timeout=args.timeout)
+    except ReachError as exc:
+        _emit(
+            _error_payload(exc.code, exc.message, hint=exc.hint or ""),
+            text=args.text,
+            render_text=_check_text,
+        )
+        return 1
+    for platform in platforms:
+        actions = [
+            name
+            for name in ("search", "read")
+            if name in platform.check and (args.action is None or args.action == name)
+        ]
+        if not actions:
+            skipped += 1
+            continue
+        for action_name in actions:
+            params = dict(platform.check[action_name])
+            if args.dry_run:
+                checks.append(
+                    {
+                        "platform": platform.id,
+                        "action": action_name,
+                        "params": params,
+                        "status": "planned",
+                        "ok": None,
+                    }
+                )
+                continue
+            started = time.monotonic()
+            payload = run_action(
+                registry,
+                routing,
+                action=action_name,
+                params=params,
+                ctx=context,
+                platform=platform.id,
+            )
+            error = payload.get("error") or {}
+            checks.append(
+                {
+                    "platform": platform.id,
+                    "action": action_name,
+                    "params": params,
+                    "status": "ok" if payload.get("ok") else "failed",
+                    "ok": bool(payload.get("ok")),
+                    "backend": payload.get("backend"),
+                    "items": len(payload.get("items") or []),
+                    "elapsed_ms": int((time.monotonic() - started) * 1000),
+                    "error": error or None,
+                }
+            )
+
+    failed = sum(1 for check in checks if check.get("ok") is False)
+    ok = failed == 0
+    result = {
+        "schema_version": 1,
+        "ok": ok,
+        "command": "check",
+        "checks": checks,
+        "meta": {
+            "count": len(checks),
+            "failed": failed,
+            "skipped": skipped,
+            "dry_run": bool(args.dry_run),
+        },
+        "error": None,
+    }
+    if not ok:
+        result["error"] = {
+            "code": "UPSTREAM_BROKEN",
+            "message": f"{failed} live check(s) failed",
+            "hint": "Re-run with --platform <id> to isolate a failing platform.",
+        }
+    _emit(result, text=args.text, render_text=_check_text)
+    return 0 if ok else 1
+
+
 def _result_text(payload: dict) -> None:
     if not payload.get("ok"):
         error = payload.get("error") or {}
@@ -608,6 +750,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--text", action="store_true", help="Human-readable report instead of JSON."
     )
     doctor.set_defaults(func=_cmd_doctor)
+
+    check = subparsers.add_parser(
+        "check", help="Run the small live checks declared in platform manifests."
+    )
+    _add_discovery_args(check)
+    check.add_argument(
+        "--platform",
+        action="append",
+        metavar="ID",
+        help="Only check this platform (repeatable).",
+    )
+    check.add_argument(
+        "--action",
+        choices=("search", "read"),
+        help="Only run this action.",
+    )
+    check.add_argument("--routing", metavar="FILE", help="Extra routing config layer.")
+    check.add_argument(
+        "--timeout", type=float, metavar="SECONDS", help="Context timeout for every check."
+    )
+    check.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the checks without touching the network.",
+    )
+    check.add_argument(
+        "--text", action="store_true", help="Human-readable report instead of JSON."
+    )
+    check.set_defaults(func=_cmd_check)
 
     explain = subparsers.add_parser(
         "explain", help="Show which platforms a request would use."

@@ -93,6 +93,7 @@ class PlatformManifest:
     domains: tuple[str, ...] = ()
     capabilities: tuple[str, ...] = ()
     public_web: Any = False
+    check: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     requires: Mapping[str, Any] = field(default_factory=dict)
     auth: Mapping[str, Any] = field(default_factory=dict)
     actions: Mapping[str, Action] = field(default_factory=dict)
@@ -202,6 +203,10 @@ def _parse_platform(data: Mapping[str, Any], manifest_path: Path, origin: str) -
         domains=tuple(str(domain) for domain in data.get("domains") or ()),
         capabilities=tuple(str(capability) for capability in data.get("capabilities") or ()),
         public_web=platform_public_web,
+        check={
+            str(name): dict(value)
+            for name, value in (data.get("check") or {}).items()
+        },
         requires=dict(data.get("requires") or {}),
         auth=dict(data.get("auth") or {}),
         actions=actions,
@@ -446,6 +451,7 @@ def _catalog_entry(platform: PlatformManifest) -> dict:
         "domains": list(platform.domains),
         "capabilities": list(platform.capabilities),
         "public_web": platform.public_web,
+        "check": sorted(platform.check),
         "requires": dict(platform.requires),
         "origin": platform.origin,
         "trusted": platform.trusted,

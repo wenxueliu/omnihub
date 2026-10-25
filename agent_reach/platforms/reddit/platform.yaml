@@ -4,6 +4,12 @@ version: 1
 level: default
 priority: 130
 capabilities: []
+
+check:
+  search: {query: "asyncio", limit: 1}
+  read:
+    target: "https://www.reddit.com/r/Python/comments/j531n0/an_introduction_to_async_programming_python/"
+
 domains:
   - reddit.com
   - www.reddit.com

@@ -2,13 +2,14 @@
 
 配置驱动、按平台组织的 Agent 互联网访问层。
 
-当前完成 **M3** 并进入 **M4**：M0 契约层（目录发现、manifest 校验、两级
+当前完成 **M4** 并进入 **M5**：M0 契约层（目录发现、manifest 校验、两级
 优先级路由）+ M1 执行层（HTTP/CLI/OpenCLI 适配器、`web` 公共网页平台）+
 M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
 （kimi-webbridge `daemon` 适配器、`search --enrich N`）+ M4 插件校验与
-信任、`explain` 来源明细、`SKILL.md` 生成。CLI 已支持 `platforms`、
-`doctor`、`explain`、`plugin`、`skill`、`search` 和 `read`。剩余平台迁移、
-MCP/浏览器适配器详见 `docs/implementation.md`。
+信任、`explain` 来源明细、`SKILL.md` 生成、平台批次二（`reddit`、
+`youtube`）+ M5 平台自声明的 `check` live 回归。CLI 已支持 `platforms`、
+`doctor`、`explain`、`plugin`、`skill`、`check`、`search` 和 `read`。
+剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
 
 ## 快速开始
 
@@ -44,6 +45,10 @@ python -m agent_reach.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --tex
 
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
 python -m agent_reach.cli doctor --text
+
+# 平台自声明的 live 回归（--dry-run 只列出计划，不联网）
+python -m agent_reach.cli check --dry-run --text
+python -m agent_reach.cli check --platform github --platform reddit --text
 
 # 第三方插件：只校验、不执行；生成给 Agent 用的 SKILL.md
 python -m agent_reach.cli plugin validate ~/.agent-reach/plugins

@@ -878,6 +878,27 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - 真实网络：Reddit 搜索/读取、YouTube 搜索/读取均返回 `ok:true`；
   `doctor --text` 中 reddit/youtube 为 `ok`，daemon 为可选适配器。
 
+**M5 平台 live 回归（2026-10-25）**
+
+- manifest 新增顶层 `check.search` / `check.read`：值就是该 action 的参数
+  对象（如 `{query, limit}`、`{target}`），由 schema 校验。检查随平台目录
+  增删自动出现或消失，核心不需要维护平台清单。
+- `check [--platform ID]... [--action search|read] [--routing FILE]
+  [--timeout S] [--dry-run] [--text]`：按平台优先级遍历，经正常 pipeline
+  以显式平台路由执行，输出每项 `status` / `backend` / `items` /
+  `elapsed_ms` / `error`，`meta` 含 `count` / `failed` / `skipped` /
+  `dry_run`。失败时 `ok:false`、错误码 `UPSTREAM_BROKEN`、退出 1；未知
+  平台 `BAD_INPUT`、退出 2。
+- `--dry-run` 只列计划，不创建 `Context`、不联网。未声明 `check` 的平台
+  （如离线示例 `noop`）计入 `meta.skipped`。
+- `web`、`github`、`v2ex`、`bilibili`、`reddit`、`youtube` 均声明了
+  `search` 与 `read` 检查；`check` 的参数名会与 action 声明的参数做一致性
+  测试。
+- **验收结果**：`python -m pytest -q` 211 项通过（离线）；真实网络
+  `check` 的 12 项全部 `ok`——github `github-api`，web `exa`/`jina`，
+  v2ex `sov2ex`/`v2ex-api`，bilibili `exa`/`jina`，reddit 与 youtube
+  均为 `exa`。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -905,7 +926,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 适配器 | fake 命令 / 本地 HTTP server；超时、非零退出、超大输出、YAML 错误 |
 | 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
 | 删除 | 删除平台目录后 registry 仍可加载 |
-| live | 显式开启；`agent-reach check --search` |
+| live | 显式开启；`agent-reach check --platform <id>`（`--dry-run` 离线列出计划） |
 
 测试隔离沿用现有做法：临时 HOME、禁用真实网络与 OpenCLI 调用。
 

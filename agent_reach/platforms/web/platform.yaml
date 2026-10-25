@@ -6,6 +6,10 @@ priority: 10
 domains: []
 public_web: true
 
+check:
+  search: {query: "python asyncio", limit: 1}
+  read: {target: "https://example.com/"}
+
 requires:
   adapters: [http]
 
