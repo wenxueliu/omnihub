@@ -166,17 +166,13 @@ def _platform_row(
     *,
     ctx: Any,
     adapters: Mapping[str, Any],
-    rate_limits: Any = None,
+    cooldowns: Optional[list[dict]] = None,
 ) -> dict:
     tools = _tool_rows(platform)
     adapter_rows = _adapter_rows(platform, adapters)
     secrets = _secret_rows(platform, ctx)
     auth = _auth_row(platform, ctx)
-    cooldowns = []
-    if rate_limits is not None:
-        cooldowns = [
-            row for row in rate_limits.active() if row["platform"] == platform.id
-        ]
+    cooldowns = cooldowns or []
 
     required_failures = [
         row for row in tools if row["required"] and not row["ok"]
@@ -224,9 +220,13 @@ def build_doctor_report(
     is passed; they describe transient pauses, not a health problem, so they
     never change ``status``.
     """
+    active = rate_limits.active() if rate_limits is not None else []
     rows = [
         _platform_row(
-            platform, ctx=ctx, adapters=adapters, rate_limits=rate_limits
+            platform,
+            ctx=ctx,
+            adapters=adapters,
+            cooldowns=[row for row in active if row["platform"] == platform.id],
         )
         for platform in sorted(registry.platforms.values(), key=lambda p: (p.priority, p.id))
     ]
