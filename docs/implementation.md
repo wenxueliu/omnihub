@@ -1008,6 +1008,20 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   xiaohongshu / linkedin 为 `kimi-browser`，xiaoyuzhou 为 `exa` / `jina`），
   耗时约 2 分钟，其中雪球两次导航各约 30s。
 
+**M5 浏览器标签页清理（2026-10-25）**
+
+- `read` / `browse` 每次调用生成独立 session（`reach-<platform>-<随机后缀>`），
+  `finally` 中调用 `close_session`，成功、业务错误、超时都会关闭本次查询的
+  全部标签页。独立 session 让并发的 `search --enrich` 读取不会互相关闭对方
+  的标签。
+- 清理是 best effort：`close_session` 失败被吞掉，不能覆盖动作本身的错误。
+  清理使用独立的 5s 超时，不复用动作可能很长的超时。
+- 超时恢复只接管 `reach:` 分组内的标签（`tagged` / `same_page_owned` /
+  `same_host_owned`）。此前 `same_page` 可能匹配 URL 相同的用户标签；自动
+  关闭后这会误关用户页面，因此收紧为仅限自己的分组。
+- **验收结果**：`python -m pytest` 333 项通过；真实 `check --platform
+  linkedin --action search` 后 `list_browser_tabs` 中 `reach:` 标签为 0。
+
 **M5 工具型平台补充（2026-10-25）**
 
 - `deepwiki` (200)：builtin hook 直接 POST 公开 MCP 端点

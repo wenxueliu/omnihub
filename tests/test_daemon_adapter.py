@@ -55,6 +55,14 @@ def _error(code, message):
     return RawResult(data={"ok": False, "error": {"code": code, "message": message}})
 
 
+def _closed(count=1):
+    return _ok({"success": True, "closed": count})
+
+
+def _actions(ctx):
+    return [call["payload"]["action"] for call in ctx.calls]
+
+
 def _adapter(handler, tmp_path):
     return DaemonAdapter(context=FakeLoopback(handler), home=tmp_path, environ={})
 
@@ -140,12 +148,15 @@ def test_invoke_passes_through_a_snapshot_command(tmp_path):
     )
     assert result.data == {"success": True, "tabs": []}
     assert result.meta["session"] == "reach-web"
+    assert _actions(adapter._context) == ["list_tabs"]
 
 
 def test_daemon_read_navigates_and_pages_until_budget(tmp_path):
     snapshots = []
 
     def handler(url, payload):
+        if payload["action"] == "close_session":
+            return _closed()
         if payload["action"] == "navigate":
             return _ok({"success": True, "url": "https://example.com/", "tabId": 7})
         assert payload["action"] == "snapshot"
@@ -190,10 +201,16 @@ def test_daemon_read_navigates_and_pages_until_budget(tmp_path):
     assert data["tab_id"] == 7
     assert snapshots[1]["cursor"] == "c1"
     assert snapshots[0]["format"] == "aria"
+    assert _actions(adapter._context)[-1] == "close_session"
+    sessions = {call["payload"]["session"] for call in adapter._context.calls}
+    assert len(sessions) == 1
+    assert next(iter(sessions)).startswith("reach-web-")
 
 
 def test_daemon_read_stops_cleanly_on_expired_cursor(tmp_path):
     def handler(url, payload):
+        if payload["action"] == "close_session":
+            return _closed()
         if payload["action"] == "navigate":
             return _ok({"success": True, "url": "https://example.com/"})
         if "cursor" not in payload["args"]:
@@ -220,10 +237,13 @@ def test_daemon_read_stops_cleanly_on_expired_cursor(tmp_path):
     assert result.data["text"] == "A" * 300
     assert result.data["truncated"] is True
     assert result.data["truncated_reason"] == "cursor_expired"
+    assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_extension_missing_maps_to_setup_error(tmp_path):
     def handler(url, payload):
+        if payload["action"] == "close_session":
+            return _closed()
         if payload["action"] == "navigate":
             return _ok({"success": True, "url": "https://example.com/"})
         return _error("extension_not_connected", "open the extension")
@@ -241,10 +261,14 @@ def test_daemon_extension_missing_maps_to_setup_error(tmp_path):
         )
     assert info.value.code == NEED_SETUP
     assert "extension" in info.value.message
+    assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_read_rejects_private_targets(tmp_path):
-    adapter = _adapter(lambda url, payload: _ok({}), tmp_path)
+    def handler(url, payload):
+        return _closed() if payload["action"] == "close_session" else _ok({})
+
+    adapter = _adapter(handler, tmp_path)
     with pytest.raises(ReachError) as info:
         adapter.invoke(
             ToolCall(
@@ -256,6 +280,7 @@ def test_daemon_read_rejects_private_targets(tmp_path):
             ctx=adapter._context,
         )
     assert info.value.code == BAD_INPUT
+    assert _actions(adapter._context) == ["close_session"]
 
 
 def _browse_call(**args):
@@ -274,6 +299,8 @@ def test_daemon_browse_navigates_waits_and_decodes_json(tmp_path):
 
     def handler(url, payload):
         action = payload["action"]
+        if action == "close_session":
+            return _closed()
         if action == "navigate":
             return _ok(
                 {"success": True, "url": "https://example.com/search?q=x", "tabId": 9}
@@ -319,12 +346,18 @@ def test_daemon_browse_navigates_waits_and_decodes_json(tmp_path):
     assert evaluations[1] == '!!document.querySelector(".result")'
     assert "querySelector" not in evaluations[-1]
     assert '"limit"' not in evaluations[-1]
+    assert _actions(adapter._context)[-1] == "close_session"
+    sessions = {call["payload"]["session"] for call in adapter._context.calls}
+    assert len(sessions) == 1
+    assert next(iter(sessions)).startswith("reach-example-")
 
 
 def test_daemon_browse_maps_login_redirect_without_evaluating(tmp_path):
     evaluations = []
 
     def handler(url, payload):
+        if payload["action"] == "close_session":
+            return _closed()
         if payload["action"] == "navigate":
             return _ok({"success": True, "url": "https://example.com/login?next=/"})
         evaluations.append(payload["args"]["code"])
@@ -345,11 +378,14 @@ def test_daemon_browse_maps_login_redirect_without_evaluating(tmp_path):
         )
     assert info.value.code == NEED_LOGIN
     assert len(evaluations) == 1
+    assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_browse_maps_structured_login_and_blocked_markers(tmp_path):
     def reply(value):
         def handler(url, payload):
+            if payload["action"] == "close_session":
+                return _closed()
             if payload["action"] == "navigate":
                 return _ok({"success": True, "url": "https://example.com/"})
             return _ok({"type": "object", "value": value})
@@ -365,6 +401,7 @@ def test_daemon_browse_maps_structured_login_and_blocked_markers(tmp_path):
             adapter.invoke(_browse_call(), ctx=adapter._context)
         assert info.value.code == code
         assert value["message"] in info.value.message
+        assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
@@ -393,6 +430,8 @@ def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
         if action == "attach_tab":
             assert payload["args"]["tabId"] == 7
             return _ok({"success": True, "tabId": 7, "url": "https://example.com/search?q=x"})
+        if action == "close_session":
+            return _closed()
         assert action == "evaluate"
         if "location.href" in payload["args"]["code"]:
             return _ok(
@@ -420,6 +459,7 @@ def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
     assert result.meta["nav_recovered"] is True
     assert result.meta["tab_id"] == 7
     assert calls[:4] == ["navigate", "list_tabs", "list_browser_tabs", "attach_tab"]
+    assert calls[-1] == "close_session"
 
 
 def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
@@ -444,6 +484,8 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
                     ],
                 }
             )
+        if action == "close_session":
+            return _closed()
         assert action == "evaluate"
         if "location.href" in payload["args"]["code"]:
             return _ok(
@@ -462,6 +504,7 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
     assert result.data == {"title": "One", "url": "https://example.com/1"}
     assert result.meta["tab_id"] == 9
     assert "list_browser_tabs" not in calls
+    assert calls[-1] == "close_session"
 
 
 def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
@@ -472,6 +515,8 @@ def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
             return _ok({"success": True, "tabs": []})
         if payload["action"] == "list_browser_tabs":
             return _ok({"tabs": [{"tabId": 3, "url": "https://example.com/unrelated"}]})
+        if payload["action"] == "close_session":
+            return _closed()
         raise AssertionError("browse should stop before evaluating")
 
     adapter = _adapter(handler, tmp_path)
@@ -481,6 +526,40 @@ def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
             ctx=adapter._context,
         )
     assert info.value.code == TIMEOUT
+    assert _actions(adapter._context)[-1] == "close_session"
+
+
+def test_daemon_browse_does_not_borrow_a_user_tab_after_timeout(tmp_path):
+    def handler(url, payload):
+        if payload["action"] == "navigate":
+            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+        if payload["action"] == "list_tabs":
+            return _ok({"success": True, "tabs": []})
+        if payload["action"] == "list_browser_tabs":
+            return _ok(
+                {
+                    "tabs": [
+                        {
+                            "tabId": 5,
+                            "url": "https://example.com/search?q=x",
+                            "groupTitle": "user research",
+                        }
+                    ]
+                }
+            )
+        if payload["action"] == "close_session":
+            return _closed()
+        raise AssertionError("a user tab must not be attached or evaluated")
+
+    adapter = _adapter(handler, tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(
+            _browse_call(group_title="reach: example search", wait_for=None),
+            ctx=adapter._context,
+        )
+    assert info.value.code == TIMEOUT
+    assert "attach_tab" not in _actions(adapter._context)
+    assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_browse_requires_a_trusted_platform(tmp_path):
@@ -506,13 +585,68 @@ def test_daemon_browse_requires_a_trusted_platform(tmp_path):
 
 
 def test_daemon_browse_rejects_private_targets(tmp_path):
-    adapter = _adapter(lambda url, payload: _ok({}), tmp_path)
+    def handler(url, payload):
+        return _closed() if payload["action"] == "close_session" else _ok({})
+
+    adapter = _adapter(handler, tmp_path)
     with pytest.raises(ReachError) as info:
         adapter.invoke(
             _browse_call(url="http://127.0.0.1/secret"),
             ctx=adapter._context,
         )
     assert info.value.code == BAD_INPUT
+    assert _actions(adapter._context) == ["close_session"]
+
+
+def test_daemon_tab_cleanup_uses_a_fresh_session_per_invocation(tmp_path):
+    def handler(url, payload):
+        if payload["action"] == "close_session":
+            return _closed()
+        if payload["action"] == "navigate":
+            return _ok({"success": True, "url": "https://example.com/"})
+        return _ok({"url": "https://example.com/", "title": "Example", "tree_text": "A"})
+
+    adapter = _adapter(handler, tmp_path)
+    for _ in range(2):
+        adapter.invoke(
+            ToolCall(
+                adapter="daemon",
+                call="read",
+                args={"url": "https://example.com/"},
+                raw={"platform_id": "web"},
+            ),
+            ctx=adapter._context,
+        )
+
+    navigations = [
+        call["payload"]["session"]
+        for call in adapter._context.calls
+        if call["payload"]["action"] == "navigate"
+    ]
+    closes = [
+        call["payload"]["session"]
+        for call in adapter._context.calls
+        if call["payload"]["action"] == "close_session"
+    ]
+    assert len(set(navigations)) == 2
+    assert len(closes) == 2
+    assert set(navigations) == set(closes)
+    assert all(session.startswith("reach-web-") for session in navigations)
+
+
+def test_daemon_tab_cleanup_failure_does_not_mask_the_action_error(tmp_path):
+    def handler(url, payload):
+        if payload["action"] == "navigate":
+            return _ok({"success": True, "url": "https://example.com/"})
+        if payload["action"] == "close_session":
+            return ReachError(UPSTREAM_BROKEN, "daemon went away during cleanup")
+        return _ok({"type": "object", "value": {"blocked": True, "message": "captcha"}})
+
+    adapter = _adapter(handler, tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(_browse_call(), ctx=adapter._context)
+    assert info.value.code == PLATFORM_BLOCKED
+    assert _actions(adapter._context)[-1] == "close_session"
 
 
 def test_daemon_address_override_cannot_leave_loopback(tmp_path):

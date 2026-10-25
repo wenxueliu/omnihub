@@ -11,6 +11,12 @@ passed through as-is; ``read`` is a composite that navigates to the target and
 pages through the ARIA snapshot until the character budget runs out. Cursors
 expire after five minutes, so an expired cursor simply ends the read with
 ``truncated_reason: cursor_expired`` instead of failing the action.
+
+Tab lifecycle: every ``read``/``browse`` invocation gets its own session, so
+concurrent queries never share a tab, and the session is closed in a
+``finally`` block — the tab is removed whether the action succeeded or failed.
+Cleanup is best effort: a close failure is swallowed so it cannot mask the
+action's own result.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
@@ -51,6 +58,12 @@ _POLL_SECONDS = 0.25
 _MAX_CODE_CHARS = 100_000
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 50
+
+#: Actions that open/attach a browser tab and must clean up after themselves.
+_TAB_ACTIONS = frozenset({"read", "browse"})
+#: Closing a tab is maintenance, not part of the query; never inherit the
+#: action's (possibly long) timeout.
+_CLOSE_TIMEOUT = 5.0
 
 
 class ExpiredCursor(ReachError):
@@ -321,33 +334,59 @@ class DaemonAdapter:
         if not action:
             raise ReachError(BAD_INPUT, "daemon source requires a call (e.g. snapshot, read)")
         base = self.addr
-        session = call.session or f"reach-{call.raw.get('platform_id') or DEFAULT_SESSION}"
+        platform_id = call.raw.get("platform_id") or DEFAULT_SESSION
+        session = call.session or f"reach-{platform_id}"
+        tab_action = action in _TAB_ACTIONS
+        if tab_action and call.session is None:
+            # One query = one session = one tab group. A per-invocation suffix
+            # keeps concurrent reads (e.g. `search --enrich`) from closing
+            # each other's tabs.
+            session = f"{session}-{uuid.uuid4().hex[:8]}"
         args = dict(call.args or {})
         extra_meta: dict[str, Any] = {}
-        if action == "read":
-            data = self._read(
-                base, session, args, call, ctx, timeout=call.timeout, max_bytes=call.max_bytes
-            )
-        elif action == "browse":
-            if not call.raw.get("platform_trusted"):
-                raise ReachError(
-                    NEED_SETUP,
-                    "daemon browse runs JavaScript in the user's browser and requires "
-                    "a built-in or explicitly trusted platform",
+        cleanup = tab_action and (
+            action != "browse" or bool(call.raw.get("platform_trusted"))
+        )
+        try:
+            if action == "read":
+                data = self._read(
+                    base,
+                    session,
+                    args,
+                    call,
+                    ctx,
+                    timeout=call.timeout,
+                    max_bytes=call.max_bytes,
                 )
-            data, extra_meta = self._browse(
-                base, session, args, call, ctx, timeout=call.timeout, max_bytes=call.max_bytes
-            )
-        else:
-            data = self._command(
-                base,
-                action,
-                args,
-                session,
-                ctx,
-                timeout=call.timeout,
-                max_bytes=call.max_bytes,
-            )
+            elif action == "browse":
+                if not call.raw.get("platform_trusted"):
+                    raise ReachError(
+                        NEED_SETUP,
+                        "daemon browse runs JavaScript in the user's browser and requires "
+                        "a built-in or explicitly trusted platform",
+                    )
+                data, extra_meta = self._browse(
+                    base,
+                    session,
+                    args,
+                    call,
+                    ctx,
+                    timeout=call.timeout,
+                    max_bytes=call.max_bytes,
+                )
+            else:
+                data = self._command(
+                    base,
+                    action,
+                    args,
+                    session,
+                    ctx,
+                    timeout=call.timeout,
+                    max_bytes=call.max_bytes,
+                )
+        finally:
+            if cleanup:
+                self._close_session(base, session, ctx)
         return RawResult(
             ok=True,
             data=data,
@@ -384,6 +423,24 @@ class DaemonAdapter:
         if payload.get("ok") is not True:
             raise _daemon_error(payload.get("error"), action=action)
         return payload.get("data")
+
+    def _close_session(self, base: str, session: str, ctx: Any) -> None:
+        """Close every tab this query opened; never raises.
+
+        Cleanup runs for failures too, so the finally block must not replace
+        the action's own error with a cleanup error.
+        """
+        try:
+            self._command(
+                base,
+                "close_session",
+                {},
+                session,
+                ctx,
+                timeout=_CLOSE_TIMEOUT,
+            )
+        except Exception:
+            return
 
     def _read(
         self,
@@ -737,8 +794,14 @@ class DaemonAdapter:
             for tab in candidates
             if group_title and tab.get("groupTitle") == str(group_title)
         ]
-        same_page = [
-            tab for tab in candidates if _page_key(str(tab.get("url") or "")) == wanted
+        # Only tabs inside one of our own groups are eligible. A timed-out
+        # navigation must never hand us a tab the user opened, because cleanup
+        # closes the session when the action finishes.
+        same_page_owned = [
+            tab
+            for tab in candidates
+            if _page_key(str(tab.get("url") or "")) == wanted
+            and str(tab.get("groupTitle") or "").startswith("reach:")
         ]
         # Pages redirect (search_result -> explore), and a reused tab keeps the
         # group title of the earlier navigation. Stay inside our own groups
@@ -750,7 +813,7 @@ class DaemonAdapter:
             and (_page_key(str(tab.get("url") or "")) or ("", ""))[0] == wanted_host
             and str(tab.get("groupTitle") or "").startswith("reach:")
         ]
-        pool = tagged or same_page or same_host_owned
+        pool = tagged or same_page_owned or same_host_owned
         if not pool:
             return None
         chosen = max(pool, key=lambda tab: int(tab.get("tabId") or 0))

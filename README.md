@@ -126,6 +126,9 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
   只保存选择器与提取逻辑，`browse` 复合动作负责导航、等待选择器、登录/风控
   标记和结果限流。daemon 不可用时这些平台记为 `degraded`，不会让 `doctor`
   失败。Twitter 另有 Exa `site:x.com` 搜索兜底。
+- **标签页生命周期**：每次 `read` / `browse` 使用独立 session，结束后（成功、
+  失败或超时）都会关闭该 session 的全部标签页；并发查询不会互相关闭对方的
+  标签，超时恢复也只接管 `reach:` 分组内的标签，不会动用户自己打开的页面。
 - `xiaoyuzhou`：Exa `site:xiaoyuzhoufm.com` 搜索；读取优先 Jina，daemon
   可用时用真实浏览器兜底，最后再走 Exa fetch。
 - 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
