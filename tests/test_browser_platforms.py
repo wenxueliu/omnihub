@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_reach.adapters.base import Health, RawResult
-from agent_reach.adapters.builtin import BuiltinAdapter
-from agent_reach.core.config import DEFAULT_ROUTING
-from agent_reach.core.doctor import build_doctor_report
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import discover
-from agent_reach.core.router import build_plan
+from omnihub.adapters.base import Health, RawResult
+from omnihub.adapters.builtin import BuiltinAdapter
+from omnihub.core.config import DEFAULT_ROUTING
+from omnihub.core.doctor import build_doctor_report
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import discover
+from omnihub.core.router import build_plan
 
-PLATFORMS = Path(__file__).resolve().parents[1] / "agent_reach" / "platforms"
+PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 BROWSER_PLATFORMS = ("twitter", "xueqiu", "xiaohongshu", "linkedin")
 
 

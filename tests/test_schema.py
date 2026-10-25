@@ -7,17 +7,17 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from agent_reach.core.registry import (
+from omnihub.core.registry import (
     SCHEMA_DIR,
     ManifestError,
     discover_tools,
     load_platform,
 )
-from agent_reach.core.result import TIMEOUT, ReachError, envelope, make_item
+from omnihub.core.result import TIMEOUT, OmniHubError, envelope, make_item
 
 NOOP = (
     Path(__file__).resolve().parents[1]
-    / "agent_reach"
+    / "omnihub"
     / "platforms"
     / "noop"
     / "platform.yaml"
@@ -133,5 +133,5 @@ def test_envelope_matches_schema():
     )
 
     validator.validate(
-        envelope(channel="noop", action="search", error=ReachError(TIMEOUT, "slow"))
+        envelope(channel="noop", action="search", error=OmniHubError(TIMEOUT, "slow"))
     )

@@ -9,8 +9,8 @@ from typing import Any, Callable
 
 import pytest
 
-from agent_reach import xiaohongshu_cli as xhs
-from agent_reach.xiaohongshu_cli import CliError, DaemonClient, TokenCache, read, search
+from omnihub import xiaohongshu_cli as xhs
+from omnihub.xiaohongshu_cli import CliError, DaemonClient, TokenCache, read, search
 
 NOTE_A = "a" * 24
 NOTE_B = "b" * 24

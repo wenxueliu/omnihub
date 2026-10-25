@@ -5,8 +5,8 @@ import os
 
 import pytest
 
-from agent_reach.core.config import state_dir
-from agent_reach.core.ratelimit import (
+from omnihub.core.config import state_dir
+from omnihub.core.ratelimit import (
     BACKEND_PAUSES,
     BLOCKED_COOLDOWN,
     DEFAULT_COOLDOWN,
@@ -15,7 +15,7 @@ from agent_reach.core.ratelimit import (
     RateLimits,
     default_state_path,
 )
-from agent_reach.core.result import (
+from omnihub.core.result import (
     BAD_INPUT,
     NEED_SETUP,
     NOT_FOUND,
@@ -180,7 +180,7 @@ def test_a_symlinked_state_path_is_never_written(tmp_path):
 
 
 def test_state_path_honours_reach_state_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "custom"))
+    monkeypatch.setenv("OMNIHUB_STATE_DIR", str(tmp_path / "custom"))
     assert state_dir() == tmp_path / "custom"
     assert default_state_path() == tmp_path / "custom" / "rate_limits.json"
 
@@ -239,9 +239,9 @@ def test_clear_on_a_missing_ledger_does_not_create_it(tmp_path):
 
 
 def test_cooldowns_cli_lists_and_resets(monkeypatch, tmp_path, capsys):
-    from agent_reach.cli import main
+    from omnihub.cli import main
 
-    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("OMNIHUB_STATE_DIR", str(tmp_path / "state"))
     limiter = RateLimits()
     limiter.note_error("github", "github-api", RATE_LIMITED, retry_after=120)
     limiter.note_error("web", "jina", UPSTREAM_BROKEN)
@@ -266,9 +266,9 @@ def test_cooldowns_cli_lists_and_resets(monkeypatch, tmp_path, capsys):
 
 
 def test_cooldowns_cli_rejects_unknown_platform(monkeypatch, tmp_path, capsys):
-    from agent_reach.cli import main
+    from omnihub.cli import main
 
-    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("OMNIHUB_STATE_DIR", str(tmp_path / "state"))
     assert main(["cooldowns", "reset", "--platform", "not-a-platform"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["code"] == BAD_INPUT

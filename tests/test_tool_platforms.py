@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-import agent_reach.core.pipeline as pipeline
-from agent_reach.adapters.base import RawResult
-from agent_reach.adapters.builtin import BuiltinAdapter
-from agent_reach.core.config import DEFAULT_ROUTING
-from agent_reach.core.doctor import build_doctor_report
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import discover
-from agent_reach.core.router import build_plan
+import omnihub.core.pipeline as pipeline
+from omnihub.adapters.base import RawResult
+from omnihub.adapters.builtin import BuiltinAdapter
+from omnihub.core.config import DEFAULT_ROUTING
+from omnihub.core.doctor import build_doctor_report
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import discover
+from omnihub.core.router import build_plan
 
-PLATFORMS = Path(__file__).resolve().parents[1] / "agent_reach" / "platforms"
+PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 
 
 def _fixture(platform: str, name: str):

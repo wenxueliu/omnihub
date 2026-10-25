@@ -4,7 +4,7 @@ import json
 
 import yaml
 
-from agent_reach.cli import main
+from omnihub.cli import main
 
 
 def _payload(capsys):
@@ -44,7 +44,7 @@ def test_skill_renders_markdown_without_secrets(make_platform, tmp_path, capsys)
 
     assert main(["skill", "--plugin-dir", str(root), "--no-builtin"]) == 0
     captured = capsys.readouterr()
-    assert captured.out.startswith("# reach-platforms")
+    assert captured.out.startswith("# OmniHub")
     assert "alpha" in captured.out
     assert "`query`: str (required)" in captured.out
     assert "adapter `builtin`" in captured.out

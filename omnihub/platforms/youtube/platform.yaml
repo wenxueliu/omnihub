@@ -1,0 +1,97 @@
+id: youtube
+description: YouTube video search and transcript-style page reads.
+version: 1
+level: default
+priority: 140
+capabilities: []
+
+check:
+  search: {query: "asyncio tutorial", limit: 1}
+  read: {target: "https://www.youtube.com/watch?v=oAkLSJNr5zY"}
+
+domains:
+  - youtube.com
+  - www.youtube.com
+  - m.youtube.com
+  - youtu.be
+
+requires:
+  adapters: [http]
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search YouTube videos for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of results.
+    sources:
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_search_exa
+            arguments:
+              query: "site:youtube.com ${query}"
+              objective: "${query}"
+              numResults: "${limit}"
+        parse:
+          - exa_search
+        priority: 10
+        timeout: 30
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: YouTube watch URL (youtu.be short links are accepted).
+    sources:
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_fetch_exa
+            arguments:
+              urls:
+                - "${target}"
+              maxCharacters: 20000
+        parse:
+          - exa_read
+        priority: 10
+        timeout: 60
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: read
+        args:
+          url: "${target}"
+          max_chars: 20000
+          group_title: "omnihub: youtube read"
+        parse:
+          - daemon_page
+        priority: 20
+        timeout: 60

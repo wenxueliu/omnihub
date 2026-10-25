@@ -1,6 +1,9 @@
-# reach-platforms
+# OmniHub
 
-配置驱动、按平台组织的 Agent 互联网访问层。
+**One hub for every source your agent needs.**
+
+配置驱动、按平台组织的 Agent 互联网信息中枢：把任意网页与平台统一成
+`search` / `read` 结果，交给 Agent 直接消费。
 
 当前完成 **M4** 并进入 **M5**：M0 契约层（目录发现、manifest 校验、两级
 优先级路由）+ M1 执行层（HTTP/CLI/OpenCLI 适配器、`web` 公共网页平台）+
@@ -17,73 +20,73 @@ CLI）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
 ## 快速开始
 
 ```bash
-cd services/reach-platforms
+cd services/omnihub
 python -m pytest -q
 
 # 列出发现的平台（JSON 是默认输出）
-python -m agent_reach.cli platforms
+python -m omnihub.cli platforms
 
 # 解释一次请求会走哪些平台
-python -m agent_reach.cli explain --platform web --action search
-python -m agent_reach.cli explain --url https://www.example.com/a --action read
+python -m omnihub.cli explain --platform web --action search
+python -m omnihub.cli explain --url https://www.example.com/a --action read
 
 # 搜索与按需读取
-python -m agent_reach.cli search "yt-dlp github" --platform web --limit 3
-python -m agent_reach.cli read https://example.com --platform web
+python -m omnihub.cli search "yt-dlp github" --platform web --limit 3
+python -m omnihub.cli read https://example.com --platform web
 
 # 搜索后自动补正文（失败隔离，失败项进 meta.enrich_errors）
-python -m agent_reach.cli search "example domain" --limit 3 --enrich 2
+python -m omnihub.cli search "example domain" --limit 3 --enrich 2
 
 # 站点平台
-python -m agent_reach.cli search "flask" --platform github --limit 3
-python -m agent_reach.cli read https://github.com/pallets/flask/issues/42 --text
-python -m agent_reach.cli search "python 限流" --platform v2ex --limit 3
-python -m agent_reach.cli read https://www.v2ex.com/t/1 --text
-python -m agent_reach.cli search "rust 教程" --platform bilibili --limit 3
-python -m agent_reach.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
-python -m agent_reach.cli search "asyncio" --platform reddit --limit 3
-python -m agent_reach.cli read https://www.reddit.com/r/Python/comments/j531n0/an_introduction_to_async_programming_python/ --text
-python -m agent_reach.cli search "asyncio tutorial" --platform youtube --limit 3
-python -m agent_reach.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --text
+python -m omnihub.cli search "flask" --platform github --limit 3
+python -m omnihub.cli read https://github.com/pallets/flask/issues/42 --text
+python -m omnihub.cli search "python 限流" --platform v2ex --limit 3
+python -m omnihub.cli read https://www.v2ex.com/t/1 --text
+python -m omnihub.cli search "rust 教程" --platform bilibili --limit 3
+python -m omnihub.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
+python -m omnihub.cli search "asyncio" --platform reddit --limit 3
+python -m omnihub.cli read https://www.reddit.com/r/Python/comments/j531n0/an_introduction_to_async_programming_python/ --text
+python -m omnihub.cli search "asyncio tutorial" --platform youtube --limit 3
+python -m omnihub.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --text
 
 # 登录态平台（需要本机 kimi-webbridge daemon 与浏览器登录）
-python -m agent_reach.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
-python -m agent_reach.cli search "openai" --platform twitter --limit 3
-python -m agent_reach.cli read https://x.com/user/status/1 --text
-python -m agent_reach.cli search "茅台" --platform xueqiu --limit 3
-python -m agent_reach.cli search "咖啡" --platform xiaohongshu --limit 3
-python -m agent_reach.cli search "科技" --platform xiaoyuzhou --limit 3
-python -m agent_reach.cli transcribe https://www.xiaoyuzhoufm.com/episode/6adcced4c96c8942ec11a649 --text
-python -m agent_reach.cli search "python" --platform linkedin --limit 3
-python -m agent_reach.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
+python -m omnihub.cli read https://www.bilibili.com/video/BV1S1dPBYEG9 --text
+python -m omnihub.cli search "openai" --platform twitter --limit 3
+python -m omnihub.cli read https://x.com/user/status/1 --text
+python -m omnihub.cli search "茅台" --platform xueqiu --limit 3
+python -m omnihub.cli search "咖啡" --platform xiaohongshu --limit 3
+python -m omnihub.cli search "科技" --platform xiaoyuzhou --limit 3
+python -m omnihub.cli transcribe https://www.xiaoyuzhoufm.com/episode/6adcced4c96c8942ec11a649 --text
+python -m omnihub.cli search "python" --platform linkedin --limit 3
+python -m omnihub.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
 
 # 工具型平台
-python -m agent_reach.cli read facebook/react --platform deepwiki --text
-python -m agent_reach.cli search "asyncio" --platform notebooklm --limit 3
-python -m agent_reach.cli read nbb0987654321 --platform notebooklm --text
+python -m omnihub.cli read facebook/react --platform deepwiki --text
+python -m omnihub.cli search "asyncio" --platform notebooklm --limit 3
+python -m omnihub.cli read nbb0987654321 --platform notebooklm --text
 
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
-python -m agent_reach.cli doctor --text
+python -m omnihub.cli doctor --text
 
 # 平台自声明的 live 回归（--dry-run 只列出计划，不联网）
-python -m agent_reach.cli check --dry-run --text
-python -m agent_reach.cli check --platform github --platform reddit --text
+python -m omnihub.cli check --dry-run --text
+python -m omnihub.cli check --platform github --platform reddit --text
 
 # 查看 / 清除本地冷却账本（显式操作，不会自动绕过限流）
-python -m agent_reach.cli cooldowns --text
-python -m agent_reach.cli cooldowns reset --platform github --text
+python -m omnihub.cli cooldowns --text
+python -m omnihub.cli cooldowns reset --platform github --text
 
 # 第三方插件：只校验、不执行；生成给 Agent 用的 SKILL.md
-python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
-python -m agent_reach.cli plugin list --text
-python -m agent_reach.cli skill --output SKILL.md
+python -m omnihub.cli plugin validate ~/.omnihub/plugins
+python -m omnihub.cli plugin list --text
+python -m omnihub.cli skill --output SKILL.md
 
 # 离线契约示例平台
-python -m agent_reach.cli search hello --platform noop --limit 2 --text
+python -m omnihub.cli search hello --platform noop --limit 2 --text
 
-# 安装后也可用 reach-platforms 或 agent-reach
+# 安装后也可用 omnihub 命令
 pip install -e .
-reach-platforms platforms --text
+omnihub platforms --text
 ```
 
 ### 小红书 kimi-webbridge CLI
@@ -94,10 +97,10 @@ reach-platforms platforms --text
 
 ```bash
 # 安装后使用 xiaohongshu-cli；未安装则用 python -m
-python -m agent_reach.xiaohongshu_cli login-status
-python -m agent_reach.xiaohongshu_cli search "西安 红叶" --limit 5
-python -m agent_reach.xiaohongshu_cli read 6addcd87000000002c00cb5a
-python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
+python -m omnihub.xiaohongshu_cli login-status
+python -m omnihub.xiaohongshu_cli search "西安 红叶" --limit 5
+python -m omnihub.xiaohongshu_cli read 6addcd87000000002c00cb5a
+python -m omnihub.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
 ```
 
 输出统一为 `{"ok": true, "data": ...}`，错误时为
@@ -121,7 +124,7 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
   已登录浏览器里解析视频 `cid` 和字幕签名地址，再下载 AI/CC 字幕 JSON，
   输出带标题、UP 主、发布时间和逐条字幕正文的 item（存在多语言轨道时每条
   轨道一个 item）。字幕默认以 `.txt` + `.srt` 写入当前目录的 `_raw/`
-  （可用 `REACH_RAW_DIR` 覆盖），文件路径记录在 item 的
+  （可用 `OMNIHUB_RAW_DIR` 覆盖），文件路径记录在 item 的
   `raw.saved_files`。不需要 `BILIBILI_COOKIE`；daemon 或登录态缺失时
   `read` 记为 `SKIP`，`search` 不受影响。
 - `reddit`：Exa `site:reddit.com` 搜索；Exa fetch 读取公开帖子与高赞评论，
@@ -135,13 +138,13 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
   失败。Twitter 另有 Exa `site:x.com` 搜索兜底。
 - **标签页生命周期**：每次 `read` / `browse` 使用独立 session，结束后（成功、
   失败或超时）都会关闭该 session 的全部标签页；并发查询不会互相关闭对方的
-  标签，超时恢复也只接管 `reach:` 分组内的标签，不会动用户自己打开的页面。
+  标签，超时恢复也只接管 `omnihub:` 分组内的标签，不会动用户自己打开的页面。
 - `xiaoyuzhou`：Exa `site:xiaoyuzhoufm.com` 搜索；读取优先 Jina，daemon
   可用时用真实浏览器兜底，最后再走 Exa fetch。`transcribe` 从单集页面
   提取公开音频地址，经 ffmpeg 压缩切片后调用 Whisper 兼容接口（Groq /
   OpenAI）转文字，`--polish` 再让 Groq Llama 补中文标点。需要
   `ffmpeg` 与 `GROQ_API_KEY` 或 `OPENAI_API_KEY`（环境变量或
-  `~/.agent-reach/secrets.yaml`）；密钥缺失时返回 `NEED_SETUP`，不会影响
+  `~/.omnihub/secrets.yaml`）；密钥缺失时返回 `NEED_SETUP`，不会影响
   `search` / `read`。
 - 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
   `check` 只对搜索做 live 回归。
@@ -158,7 +161,7 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
 ## 目录
 
 ```
-agent_reach/
+omnihub/
   cli.py                 # platforms / doctor / explain / check / cooldowns / search / read / transcribe
   xiaohongshu_cli.py     # kimi-webbridge 小红书 CLI（login-status / search / read）
   transcribe.py          # ffmpeg 压缩切片 + Groq/OpenAI Whisper 音频转写
@@ -244,16 +247,16 @@ kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭�
 
 ### 第三方插件
 
-插件放在 `$REACH_PLUGIN_PATH`、`~/.agent-reach/plugins/<id>/` 或
-`./.agent-reach/plugins/<id>/`，同名覆盖内置平台。纯清单插件直接加载；
+插件放在 `$OMNIHUB_PLUGIN_PATH`、`~/.omnihub/plugins/<id>/` 或
+`./.omnihub/plugins/<id>/`，同名覆盖内置平台。纯清单插件直接加载；
 带 `search.py` / `read.py` / `parse.py` / `transcribe.py` 的插件是在用户权限下执行 Python，
 因此必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写 `[]`）
 并且显式信任：
 
 ```bash
-python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
-python -m agent_reach.cli search "query" --trust-plugin my-plugin
-# 或 REACH_TRUSTED_PLUGINS=my-plugin
+python -m omnihub.cli plugin validate ~/.omnihub/plugins
+python -m omnihub.cli search "query" --trust-plugin my-plugin
+# 或 OMNIHUB_TRUSTED_PLUGINS=my-plugin
 ```
 
 未信任时插件仍会出现在 `platforms` 里，但运行其代码会返回 `NEED_SETUP`；
@@ -277,8 +280,8 @@ python -m agent_reach.cli search "query" --trust-plugin my-plugin
 `retry_after_seconds`；最终错误也会在 `error.retry_after_seconds` 中给出
 剩余秒数。成功调用会清除该来源的暂停；平台冷却只会自然过期。
 
-账本位于 `~/.agent-reach/state/rate_limits.json`（目录 0700、文件 0600），
-可用 `REACH_STATE_DIR` 改写位置。文件只保存平台/来源名与时间戳，不保存
+账本位于 `~/.omnihub/state/rate_limits.json`（目录 0700、文件 0600），
+可用 `OMNIHUB_STATE_DIR` 改写位置。文件只保存平台/来源名与时间戳，不保存
 查询、URL 或凭据；损坏或不可写时直接忽略，不会阻塞请求。
 
 `doctor` 会在对应平台下输出 `cooling` 行；`cooldowns` 命令列出全部未过期
@@ -302,9 +305,9 @@ sources:
 按以下顺序合并，后者覆盖前者：
 
 1. 内置默认值
-2. `~/.agent-reach/config/routing.yaml`
-3. `./.agent-reach/config/routing.yaml`
-4. `$REACH_ROUTING`
+2. `~/.omnihub/config/routing.yaml`
+3. `./.omnihub/config/routing.yaml`
+4. `$OMNIHUB_ROUTING`
 5. `--routing FILE`
 
 ```yaml
@@ -326,7 +329,7 @@ aggregate:
 安全策略（超时上限、输出上限、URL 白名单与 DNS 解析校验）不在 routing
 配置里，平台不能通过 YAML 放宽这些限制。发起 HTTP 前会拒绝解析到
 loopback/私网地址的公网域名，重定向后同样复检。凭据通过 `${secret:NAME}` 从环境变量或
-`~/.agent-reach/secrets.yaml` 注入，不写进 manifest 输出。
+`~/.omnihub/secrets.yaml` 注入，不写进 manifest 输出。
 
 ## 设计文档
 

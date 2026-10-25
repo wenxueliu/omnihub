@@ -4,12 +4,12 @@ import json
 
 import yaml
 
-from agent_reach.adapters.registry import build_adapters
-from agent_reach.cli import main
-from agent_reach.core.context import Context
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import discover
-from agent_reach.core.router import build_plan
+from omnihub.adapters.registry import build_adapters
+from omnihub.cli import main
+from omnihub.core.context import Context
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import discover
+from omnihub.core.router import build_plan
 
 SEARCH_HOOK = """
 def search(query, limit=5, params=None, ctx=None):
@@ -74,7 +74,7 @@ def test_trusted_plugins_env_and_argument(tmp_path, monkeypatch):
     assert registry.platforms["alpha"].trusted is True
     assert registry.platforms["beta"].trusted is False
 
-    monkeypatch.setenv("REACH_TRUSTED_PLUGINS", "beta")
+    monkeypatch.setenv("OMNIHUB_TRUSTED_PLUGINS", "beta")
     registry = discover(plugin_dirs=[root], include_builtin=False)
     assert registry.platforms["alpha"].trusted is False
     assert registry.platforms["beta"].trusted is True

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from agent_reach.core.enrich import enrich_items
+from omnihub.core.enrich import enrich_items
 
 
 def _payload(items, *, ok=True):
@@ -128,7 +128,7 @@ def test_enrich_does_nothing_for_failed_payloads():
 
 
 def test_search_enrich_flag_wires_reads(monkeypatch, capsys):
-    from agent_reach import cli
+    from omnihub import cli
 
     def fake_run_action(registry, routing, *, action, params, ctx, **kwargs):
         if action == "search":

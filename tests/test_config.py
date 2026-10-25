@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from agent_reach.core.config import ConfigError, deep_merge, load_routing
+from omnihub.core.config import ConfigError, deep_merge, load_routing
 
 
 def _write(path, data):
@@ -28,7 +28,7 @@ def test_layers_merge_user_project_explicit(tmp_path):
     explicit = tmp_path / "explicit.yaml"
 
     _write(
-        home / ".agent-reach" / "config" / "routing.yaml",
+        home / ".omnihub" / "config" / "routing.yaml",
         {
             "version": 1,
             "mode": "aggregate",
@@ -36,7 +36,7 @@ def test_layers_merge_user_project_explicit(tmp_path):
         },
     )
     _write(
-        project / ".agent-reach" / "config" / "routing.yaml",
+        project / ".omnihub" / "config" / "routing.yaml",
         {"version": 1, "mode": "first_success", "aggregate": {"top": 7}},
     )
     _write(explicit, {"version": 1, "intents": {"code": ["noop"]}})
@@ -51,7 +51,7 @@ def test_layers_merge_user_project_explicit(tmp_path):
 
 def test_environment_layer(tmp_path, monkeypatch):
     path = _write(tmp_path / "env.yaml", {"version": 1, "mode": "aggregate"})
-    monkeypatch.setenv("REACH_ROUTING", str(path))
+    monkeypatch.setenv("OMNIHUB_ROUTING", str(path))
     routing = load_routing(home=tmp_path / "empty", project_dir=tmp_path / "none")
     assert routing["mode"] == "aggregate"
 

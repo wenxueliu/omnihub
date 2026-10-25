@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import sys
 
-from agent_reach.adapters.base import Health, ProcessResult
-from agent_reach.core.doctor import build_doctor_report
-from agent_reach.core.registry import Registry, discover, load_platform
+from omnihub.adapters.base import Health, ProcessResult
+from omnihub.core.doctor import build_doctor_report
+from omnihub.core.registry import Registry, discover, load_platform
 
 
 class FakeAdapter:
@@ -168,7 +168,7 @@ def test_doctor_runs_builtin_auth_status(make_platform, tmp_path):
 
 
 def test_doctor_cli_json(make_platform, tmp_path, capsys):
-    from agent_reach.cli import main
+    from omnihub.cli import main
 
     root = tmp_path / "plugins"
     make_platform(root, "demo")
@@ -209,11 +209,11 @@ def test_doctor_without_a_ledger_reports_no_cooldowns(make_platform, tmp_path):
 
 
 def test_doctor_cli_text_prints_active_cooldowns(monkeypatch, tmp_path, capsys):
-    from agent_reach.cli import main
-    from agent_reach.core.ratelimit import RateLimits
-    from agent_reach.core.result import RATE_LIMITED
+    from omnihub.cli import main
+    from omnihub.core.ratelimit import RateLimits
+    from omnihub.core.result import RATE_LIMITED
 
-    monkeypatch.setenv("REACH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("OMNIHUB_STATE_DIR", str(tmp_path / "state"))
     RateLimits().note_error("github", "github-api", RATE_LIMITED, retry_after=120)
     code = main(["doctor", "--text"])
     assert code == 0

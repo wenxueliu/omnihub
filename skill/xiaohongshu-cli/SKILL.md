@@ -10,7 +10,7 @@ Searches and reads Xiaohongshu notes in the user's real, logged-in browser throu
 ## Requirements
 
 - The `kimi-webbridge` skill. If a command fails because the daemon is unreachable or the extension is not connected, recover the way that skill describes, then retry. If the daemon is not on its default address, pass `--daemon-url http://<host>:<port>`.
-- The CLI. Either install this repo (`pip install -e .`) and run `xiaohongshu-cli`, or run it from the repo root as `python -m agent_reach.xiaohongshu_cli` with the working directory set to `/home/chengnanfeng/code/harness/services/reach-platforms`.
+- The CLI. Either install this repo (`pip install -e .`) and run `xiaohongshu-cli`, or run it from the repo root as `python -m omnihub.xiaohongshu_cli` with the working directory set to `/home/chengnanfeng/code/harness/services/omnihub`.
 - A logged-in browser. Run `xiaohongshu-cli login-status` first. If it reports `not_logged_in`, ask the user to sign in at <https://www.xiaohongshu.com> in that browser, then retry. Never automate the login form.
 
 ## Commands

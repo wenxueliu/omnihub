@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-import agent_reach.cli as cli
-from agent_reach.cli import main
-from agent_reach.core.registry import discover
+import omnihub.cli as cli
+from omnihub.cli import main
+from omnihub.core.registry import discover
 
 
 def _payload(capsys):
@@ -232,7 +232,7 @@ def test_check_filters_actions_that_are_not_declared(
     def fake_run_action(*args, **kwargs):  # pragma: no cover - must never run
         raise AssertionError("no check declared for this action")
 
-    monkeypatch.setenv("REACH_PLUGIN_PATH", str(root))
+    monkeypatch.setenv("OMNIHUB_PLUGIN_PATH", str(root))
     monkeypatch.setattr(cli, "run_action", fake_run_action)
     assert main(["check", "--platform", "alpha", "--action", "read"]) == 0
     payload, _ = _payload(capsys)

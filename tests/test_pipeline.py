@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from agent_reach.adapters.base import Health, RawResult
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import discover
-from agent_reach.core.ratelimit import RateLimits
-from agent_reach.core.result import (
+from omnihub.adapters.base import Health, RawResult
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import discover
+from omnihub.core.ratelimit import RateLimits
+from omnihub.core.result import (
     BAD_INPUT,
     NEED_LOGIN,
     RATE_LIMITED,
     TIMEOUT,
     UPSTREAM_BROKEN,
-    ReachError,
+    OmniHubError,
 )
 
 
@@ -112,7 +112,7 @@ def test_first_success_falls_through_sources(make_platform, tmp_path):
     )
     adapter = FakeAdapter(
         {
-            "slow": ReachError(TIMEOUT, "slow"),
+            "slow": OmniHubError(TIMEOUT, "slow"),
             "ok": [{"title": "A", "url": "https://a.example"}],
             "b_ok": [{"title": "B"}],
         }
@@ -144,7 +144,7 @@ def test_final_code_stops_platform_fallback(make_platform, tmp_path):
     )
     adapter = FakeAdapter(
         {
-            "login": ReachError(NEED_LOGIN, "sign in"),
+            "login": OmniHubError(NEED_LOGIN, "sign in"),
             "b_ok": [{"title": "B"}],
         }
     )
@@ -282,7 +282,7 @@ def test_read_falls_back_to_web_platform(make_platform, tmp_path):
     )
     adapter = FakeAdapter(
         {
-            "site_read": ReachError(TIMEOUT, "site down"),
+            "site_read": OmniHubError(TIMEOUT, "site down"),
             "web_read": [{"title": "W", "url": "https://example.com/a", "text": "body"}],
         }
     )
@@ -434,7 +434,7 @@ def test_each_platform_applies_its_own_defaults(make_platform, tmp_path):
         },
     )
     adapter = FakeAdapter(
-        {"a_fail": ReachError(TIMEOUT, "slow"), "b_ok": [{"title": "B"}]}
+        {"a_fail": OmniHubError(TIMEOUT, "slow"), "b_ok": [{"title": "B"}]}
     )
     result = run_action(
         registry,
@@ -675,7 +675,7 @@ def test_rate_limit_cools_the_platform_and_stops_fallback(make_platform, tmp_pat
         {"a": {"priority": 10, "actions": _search_action([_source("limited")])}},
     )
     adapter = FakeAdapter(
-        {"limited": ReachError(RATE_LIMITED, "HTTP 429", retry_after_seconds=30)}
+        {"limited": OmniHubError(RATE_LIMITED, "HTTP 429", retry_after_seconds=30)}
     )
     first = run_action(
         registry,
@@ -722,7 +722,7 @@ def test_backend_pause_keeps_other_sources_available(make_platform, tmp_path):
     )
     adapter = FakeAdapter(
         {
-            "broken": ReachError(UPSTREAM_BROKEN, "boom"),
+            "broken": OmniHubError(UPSTREAM_BROKEN, "boom"),
             "ok": [{"title": "A"}],
         }
     )
@@ -764,7 +764,7 @@ def test_backend_pause_does_not_stop_platform_fallback(make_platform, tmp_path):
         },
     )
     adapter = FakeAdapter(
-        {"a_timeout": ReachError(TIMEOUT, "slow"), "b_ok": [{"title": "B"}]}
+        {"a_timeout": OmniHubError(TIMEOUT, "slow"), "b_ok": [{"title": "B"}]}
     )
     first = run_action(
         registry,

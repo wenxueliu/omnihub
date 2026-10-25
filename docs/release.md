@@ -38,7 +38,7 @@ cooling/failed 区分、插件信任、冷却账本（查询 / 清除 / pacing�
 ## 2. 静态体检
 
 ```bash
-python -m agent_reach.cli doctor --text
+python -m omnihub.cli doctor --text
 # 14 platform(s), 0 error(s), 1 degraded
 ```
 
@@ -69,7 +69,7 @@ python -m agent_reach.cli doctor --text
 ## 3. 真实网络验收
 
 ```bash
-python -m agent_reach.cli check --timeout 90 --text
+python -m omnihub.cli check --timeout 90 --text
 # 23 check(s), 0 failed, 2 skipped
 ```
 
@@ -137,6 +137,6 @@ python -m agent_reach.cli check --timeout 90 --text
 - `check` 走正常 pipeline，因此会尊重冷却账本。调试“刚失败过的平台”时，
   可以等待 `retry_after_seconds`，或确认上游恢复后运行
   `cooldowns reset --platform <id>`（等价于删除
-  `~/.agent-reach/state/rate_limits.json` 中对应条目）。
+  `~/.omnihub/state/rate_limits.json` 中对应条目）。
 - live 结果依赖 GitHub / Exa / Jina / SOV2EX / V2EX 的当前行为，上游变更
   需要更新对应平台的来源或解析器。

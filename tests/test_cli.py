@@ -4,7 +4,7 @@ import json
 
 import yaml
 
-from agent_reach.cli import main
+from omnihub.cli import main
 
 
 def _payload(capsys):

@@ -8,20 +8,20 @@ import pytest
 import requests
 import yaml
 
-import agent_reach.cli as cli
-import agent_reach.core.pipeline as pipeline
-import agent_reach.transcribe as tr
-from agent_reach.core.config import DEFAULT_ROUTING
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import discover
-from agent_reach.core.result import (
+import omnihub.cli as cli
+import omnihub.core.pipeline as pipeline
+import omnihub.transcribe as tr
+from omnihub.core.config import DEFAULT_ROUTING
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import discover
+from omnihub.core.result import (
     BAD_INPUT,
     NEED_SETUP,
     NOT_FOUND,
     RATE_LIMITED,
     TIMEOUT,
     UPSTREAM_BROKEN,
-    ReachError,
+    OmniHubError,
     envelope,
     make_item,
 )
@@ -70,7 +70,7 @@ class FakeResponse:
 
 class FakeCtx:
     timeout = 30
-    user_agent = "reach-tests/1.0"
+    user_agent = "omnihub-tests/1.0"
 
     def __init__(
         self,
@@ -185,7 +185,7 @@ def test_resolve_provider_prefers_groq_then_openai() -> None:
 
 
 def test_resolve_provider_requires_a_key() -> None:
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.resolve_provider("auto", FakeCtx())
     assert excinfo.value.code == NEED_SETUP
     assert "GROQ_API_KEY" in excinfo.value.message
@@ -193,7 +193,7 @@ def test_resolve_provider_requires_a_key() -> None:
 
 
 def test_resolve_provider_rejects_unknown_name() -> None:
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.resolve_provider("azure", FakeCtx(secrets={"GROQ_API_KEY": "g"}))
     assert excinfo.value.code == BAD_INPUT
 
@@ -254,7 +254,7 @@ def test_transcribe_chunk_maps_http_errors(
     code: str,
 ) -> None:
     monkeypatch.setattr(tr.requests, "post", lambda *args, **kwargs: response)
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.transcribe_chunk(
             _chunk(tmp_path), provider="groq", key="k", model="m"
         )
@@ -277,7 +277,7 @@ def test_transcribe_chunk_maps_network_errors(
         raise error
 
     monkeypatch.setattr(tr.requests, "post", fail)
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.transcribe_chunk(_chunk(tmp_path), provider="groq", key="k", model="m")
     assert excinfo.value.code == code
 
@@ -309,7 +309,7 @@ def test_download_audio_rejects_oversized_stream(
     response = FakeResponse(200, blocks=[b"123456"])
     monkeypatch.setattr(tr.requests, "get", lambda *args, **kwargs: response)
 
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.download_audio(AUDIO_URL, tmp_path)
     assert excinfo.value.code == BAD_INPUT
 
@@ -322,7 +322,7 @@ def test_download_audio_maps_404(
         tr.requests, "get", lambda *args, **kwargs: FakeResponse(404)
     )
 
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.download_audio(AUDIO_URL, tmp_path)
     assert excinfo.value.code == NOT_FOUND
 
@@ -413,7 +413,7 @@ def test_polish_once_reports_error_when_every_model_is_retired(
         tr.requests, "post", lambda *args, **kwargs: FakeResponse(404, text="{}")
     )
 
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr._polish_once("你好", "k")
 
     assert "unavailable" in excinfo.value.message
@@ -425,7 +425,7 @@ def test_transcribe_audio_keeps_raw_text_when_polish_fails(
     _work_files(monkeypatch, texts=("没有标点",), chunked=False)
 
     def fail(text: str, key: str) -> Any:
-        raise ReachError(UPSTREAM_BROKEN, "polish exploded")
+        raise OmniHubError(UPSTREAM_BROKEN, "polish exploded")
 
     monkeypatch.setattr(tr, "_polish_once", fail)
     result = tr.transcribe_audio(
@@ -443,7 +443,7 @@ def test_transcribe_audio_requires_groq_key_for_polish(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _work_files(monkeypatch)
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.transcribe_audio(
             AUDIO_URL,
             ctx=FakeCtx(secrets={"OPENAI_API_KEY": "o"}),
@@ -457,7 +457,7 @@ def test_transcribe_audio_rejects_empty_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _work_files(monkeypatch, texts=("",), chunked=False)
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         tr.transcribe_audio(
             AUDIO_URL, ctx=FakeCtx(secrets={"GROQ_API_KEY": "g"})
         )
@@ -539,14 +539,14 @@ def test_extract_episode_rejects_unplayable_audio(
     overrides: dict[str, Any], code: str
 ) -> None:
     module = _platform_module("transcribe.py")
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         module.extract_episode(_episode_html(_episode(**overrides)))
     assert excinfo.value.code == code
 
 
 def test_extract_episode_requires_an_audio_url_in_html() -> None:
     module = _platform_module("transcribe.py")
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         module.extract_episode("<html>nothing here</html>")
     assert excinfo.value.code == UPSTREAM_BROKEN
 
@@ -618,7 +618,7 @@ def test_hook_accepts_direct_audio_url(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_hook_rejects_missing_target() -> None:
     module = _platform_module("transcribe.py")
-    with pytest.raises(ReachError) as excinfo:
+    with pytest.raises(OmniHubError) as excinfo:
         module.transcribe(params={}, ctx=FakeCtx())
     assert excinfo.value.code == BAD_INPUT
 

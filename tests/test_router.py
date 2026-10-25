@@ -4,9 +4,9 @@ import copy
 
 import pytest
 
-from agent_reach.core.config import DEFAULT_ROUTING
-from agent_reach.core.registry import discover
-from agent_reach.core.router import RoutingError, build_plan, resolve_sources
+from omnihub.core.config import DEFAULT_ROUTING
+from omnihub.core.registry import discover
+from omnihub.core.router import RoutingError, build_plan, resolve_sources
 
 
 @pytest.fixture

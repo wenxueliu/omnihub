@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import pytest
 
-from agent_reach.core.result import (
+from omnihub.core.result import (
     DEFAULT_HINTS,
     FINAL_CODES,
     NEED_SETUP,
     TIMEOUT,
     UPSTREAM_BROKEN,
-    ReachError,
+    OmniHubError,
     classify,
     envelope,
     make_item,
     unix_to_iso,
 )
-from agent_reach.utils.text import scrub_url_credentials
+from omnihub.utils.text import scrub_url_credentials
 
 
 def test_success_envelope_has_stable_shape():
@@ -39,7 +39,7 @@ def test_success_envelope_has_stable_shape():
 
 
 def test_error_envelope_clears_items_and_uses_default_hint():
-    payload = envelope(channel="noop", action="read", error=ReachError(TIMEOUT, "slow"))
+    payload = envelope(channel="noop", action="read", error=OmniHubError(TIMEOUT, "slow"))
     assert payload["ok"] is False
     assert payload["backend"] is None
     assert payload["items"] == []

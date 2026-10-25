@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_reach.core.result import NEED_SETUP, ReachError
-from agent_reach.core.template import resolve_argv, resolve_templates
+from omnihub.core.result import NEED_SETUP, OmniHubError
+from omnihub.core.template import resolve_argv, resolve_templates
 
 
 class FakeCtx:
@@ -40,13 +40,13 @@ def test_secret_placeholder_uses_context():
 
 
 def test_missing_secret_is_need_setup():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         resolve_templates("${secret:TOKEN}", {}, FakeCtx())
     assert info.value.code == NEED_SETUP
 
 
 def test_unknown_parameter_is_a_manifest_error():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         resolve_templates("${nope}", {}, FakeCtx())
     assert info.value.code == NEED_SETUP
 
@@ -74,6 +74,6 @@ def test_filters_apply_in_order_and_stringify():
 
 
 def test_unknown_filter_is_manifest_error():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         resolve_templates("${query|rot13}", {"query": "x"}, FakeCtx())
     assert info.value.code == NEED_SETUP

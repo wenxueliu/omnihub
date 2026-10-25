@@ -1,0 +1,157 @@
+id: twitter
+description: Twitter/X search and thread reads through the user's logged-in browser.
+version: 1
+level: optional
+priority: 150
+capabilities: [browser]
+
+check:
+  search: {query: "openai", limit: 2}
+  read:
+    target: "https://x.com/HandToForehead/status/2114297993222660242"
+
+domains:
+  - x.com
+  - www.x.com
+  - twitter.com
+  - www.twitter.com
+  - mobile.twitter.com
+
+requires:
+  adapters: [http]
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search X for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of tweets.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "https://x.com/search?q=${query|urlencode}&f=live"
+          wait_for: "article"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: twitter search"
+          login_url:
+            - "/i/flow/login"
+          code: |
+            (() => {
+              const seen = new Set();
+              const items = [];
+              for (const article of document.querySelectorAll('article')) {
+                const textEl = article.querySelector('[data-testid="tweetText"]');
+                const nameEl = article.querySelector('[data-testid="User-Name"]');
+                const timeEl = article.querySelector('time');
+                const hrefs = [...article.querySelectorAll('a[href*="/status/"]')]
+                  .map(a => a.getAttribute('href') || '')
+                  .filter(h => /^\/[^/]+\/status\/\d+$/.test(h));
+                const href = hrefs[0];
+                if (!href || seen.has(href)) continue;
+                seen.add(href);
+                const text = (textEl ? textEl.innerText : article.innerText).trim();
+                items.push({
+                  title: text.slice(0, 120) || href,
+                  url: 'https://x.com' + href,
+                  author: nameEl ? nameEl.innerText.split('\n')[0].trim() : null,
+                  published_at: timeEl ? timeEl.getAttribute('datetime') : null,
+                  text
+                });
+              }
+              if (!items.length) {
+                if (location.href.includes('/i/flow/login') || document.querySelector('input[autocomplete="username"]')) {
+                  return JSON.stringify({login: true, message: 'x.com requires a logged-in browser session'});
+                }
+                if (/rate limit|something went wrong|try again/i.test(document.body.innerText || '')) {
+                  return JSON.stringify({blocked: true, message: 'x.com returned a rate-limit or error page'});
+                }
+              }
+              return JSON.stringify(items);
+            })()
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 2
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_search_exa
+            arguments:
+              query: "site:x.com ${query}"
+              objective: "${query}"
+              numResults: "${limit}"
+        parse:
+          - exa_search
+        priority: 20
+        timeout: 30
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Tweet URL on x.com or twitter.com.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "${target}"
+          wait_for: "article"
+          wait_ms: 15000
+          limit: 1
+          new_tab: false
+          group_title: "omnihub: twitter read"
+          login_url:
+            - "/i/flow/login"
+          code: |
+            (() => {
+              const article = document.querySelector('article');
+              if (!article) {
+                if (location.href.includes('/i/flow/login') || document.querySelector('input[autocomplete="username"]')) {
+                  return JSON.stringify({login: true, message: 'x.com requires a logged-in browser session'});
+                }
+                if (/rate limit|something went wrong|try again/i.test(document.body.innerText || '')) {
+                  return JSON.stringify({blocked: true, message: 'x.com returned a rate-limit or error page'});
+                }
+                return JSON.stringify({not_found: true, message: 'tweet page has no article'});
+              }
+              const textEl = article.querySelector('[data-testid="tweetText"]');
+              const nameEl = article.querySelector('[data-testid="User-Name"]');
+              const text = article.innerText.trim();
+              return JSON.stringify({
+                url: location.href,
+                title: (textEl ? textEl.innerText : text).slice(0, 120),
+                author: nameEl ? nameEl.innerText.split('\n')[0].trim() : null,
+                text
+              });
+            })()
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 60
+        min_interval: 2

@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_reach.adapters.base import Health, RawResult, ToolCall
-from agent_reach.adapters.builtin import BuiltinAdapter
-from agent_reach.adapters.cli import CliAdapter, args_to_argv, build_argv
-from agent_reach.adapters.http import HttpAdapter
-from agent_reach.adapters.opencli import OpenCliAdapter
-from agent_reach.core.context import Context
-from agent_reach.core.result import BAD_INPUT, NEED_LOGIN, NEED_SETUP, RATE_LIMITED, ReachError
+from omnihub.adapters.base import Health, RawResult, ToolCall
+from omnihub.adapters.builtin import BuiltinAdapter
+from omnihub.adapters.cli import CliAdapter, args_to_argv, build_argv
+from omnihub.adapters.http import HttpAdapter
+from omnihub.adapters.opencli import OpenCliAdapter
+from omnihub.core.context import Context
+from omnihub.core.result import BAD_INPUT, NEED_LOGIN, NEED_SETUP, RATE_LIMITED, OmniHubError
 
 
 class FakeHttpContext:
@@ -51,7 +51,7 @@ def test_http_adapter_builds_json_request():
 
 
 def test_http_adapter_rejects_private_url():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         HttpAdapter().invoke(
             ToolCall(adapter="http", url="http://127.0.0.1/"), ctx=FakeHttpContext()
         )
@@ -59,7 +59,7 @@ def test_http_adapter_rejects_private_url():
 
 
 def test_http_adapter_requires_url():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         HttpAdapter().invoke(ToolCall(adapter="http"), ctx=FakeHttpContext())
     assert info.value.code == BAD_INPUT
 
@@ -114,7 +114,7 @@ def test_cli_adapter_maps_login_wall_from_a_fake_binary(tmp_path):
         tmp_path,
         "import sys\nsys.stderr.write('please log in first')\nsys.exit(1)\n",
     )
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         CliAdapter().invoke(
             ToolCall(adapter="cli", argv=(str(binary),)), ctx=Context(timeout=5)
         )
@@ -131,7 +131,7 @@ def test_cli_adapter_maps_rate_limit():
             "import sys; sys.stderr.write('HTTP 429 too many requests'); sys.exit(1)",
         ),
     )
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         CliAdapter().invoke(call, ctx=ctx)
     assert info.value.code == RATE_LIMITED
 
@@ -169,7 +169,7 @@ def test_opencli_adapter_maps_yaml_error(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "bin") + os.pathsep + os.environ["PATH"])
     ctx = Context(timeout=5)
     call = ToolCall(adapter="opencli", site="demo", call="search", args={"fail": True})
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         OpenCliAdapter().invoke(call, ctx=ctx)
     assert info.value.code == NEED_LOGIN
     assert "sign in first" in info.value.message
@@ -181,13 +181,13 @@ def test_opencli_probe_reports_missing(monkeypatch, tmp_path):
 
 
 def test_opencli_requires_site():
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         OpenCliAdapter().invoke(ToolCall(adapter="opencli"), ctx=Context(timeout=5))
     assert info.value.code == BAD_INPUT
 
 
 def test_builtin_adapter_refuses_plugin_python(tmp_path):
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         BuiltinAdapter().invoke(
             ToolCall(
                 adapter="builtin",

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omnihub.dev/schema/routing.schema.json",
+  "title": "omnihub routing config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "mode": {
+      "type": "string",
+      "enum": ["first_success", "aggregate"]
+    },
+    "intents": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+        "uniqueItems": true
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "priority": {"type": "integer"}
+        }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "top": {"type": "integer", "minimum": 1},
+        "per_platform_limit": {"type": "integer", "minimum": 1},
+        "dedupe": {"type": "boolean"}
+      }
+    }
+  }
+}

@@ -1,9 +1,9 @@
-# Agent Reach 平台化重构：实现文档
+# OmniHub：从 Agent Reach 到平台化访问层（实现文档）
 
 - **状态**：M0–M5 已落地；278 项离线测试、21 项 live check 通过
 - **日期**：2026-10-25
 - **基线**：Agent-Reach v1.6.0（`reference/Agent-Reach`，只读参考）
-- **建议落地仓库**：`services/reach-platforms/`（独立 git 仓库）
+- **建议落地仓库**：`services/omnihub/`（独立 git 仓库）
 - **许可**：Agent-Reach 为 MIT；若复制其代码，需保留 LICENSE 与版权声明
 
 ---
@@ -25,7 +25,7 @@ Agent-Reach 目前是“一个平台一个 Python 类”的硬编码模型：
 2. 每个平台提供 `search`、`parse`、`read` 三项能力。
 3. 平台之间、平台内部工具之间都由**配置优先级**决定顺序。
 4. 搜索结果与正文读取分离：默认只返回链接与摘要，正文按需读取。
-5. 加/删平台不改中心注册表，`agent-reach platforms` 与 SKILL.md 自动反映变化。
+5. 加/删平台不改中心注册表，`omnihub platforms` 与 SKILL.md 自动反映变化。
 6. 保持现有 CLI 语法、JSON envelope、错误码兼容，支持渐进迁移。
 
 **非目标（首版不做）**：
@@ -48,7 +48,7 @@ Agent-Reach 目前是“一个平台一个 Python 类”的硬编码模型：
 | 配置格式 | YAML（复用 `pyyaml`） | 现有依赖已有，可读性优于 JSON |
 | 兼容策略 | 保持 CLI 语法、envelope、错误码；渐进迁移 | 现有使用方零感知 |
 | 正文抓取 | 默认不自动抓；`--enrich N` 或 Agent 显式 `read` | 避免 N+1 请求与不必要的反爬风险 |
-| 落地位置 | `services/reach-platforms/` | `reference/` 只读，不能就地修改 |
+| 落地位置 | `services/omnihub/` | `reference/` 只读，不能就地修改 |
 
 ---
 
@@ -58,7 +58,7 @@ Agent-Reach 目前是“一个平台一个 Python 类”的硬编码模型：
 Agent
   │
   ▼
-agent-reach search / read / platforms / explain
+omnihub search / read / platforms / explain
   │
   ▼
 Router（平台优先级 + intent 配置）
@@ -153,7 +153,7 @@ class Platform(Protocol):
         """调用一个或多个工具，返回原始结果。"""
 
     def parse(self, raw: RawResult, *, action: str, ctx: Context) -> list[Item]:
-        """把原始结果映射为统一 Item；解析失败抛 ReachError。"""
+        """把原始结果映射为统一 Item；解析失败抛 OmniHubError。"""
 
     def read(self, target: str, *, params: dict, ctx: Context) -> Item:
         """读取一个 URL 的正文/详情。"""
@@ -197,7 +197,7 @@ class RawResult:
     ok: bool
     data: Any
     text: str | None
-    error: ReachError | None
+    error: OmniHubError | None
     meta: dict                    # 耗时、字节数、命令、退出码
 ```
 
@@ -208,7 +208,7 @@ class RawResult:
 ### 5.1 目录结构
 
 ```
-agent_reach/platforms/<id>/
+omnihub/platforms/<id>/
   platform.yaml        # 必需：身份、动作、来源、优先级、依赖
   search.py            # 可选：复杂搜索
   parse.py             # 可选：平台专用解析器
@@ -294,19 +294,19 @@ actions:
 只有声明不够时才使用。核心按约定加载：
 
 ```python
-# agent_reach/platforms/bilibili/parse.py
+# omnihub/platforms/bilibili/parse.py
 def parse(raw, *, action, ctx):
     ...
 ```
 
 ```python
-# agent_reach/platforms/bilibili/search.py
+# omnihub/platforms/bilibili/search.py
 def search(query, *, limit, params, ctx):
     ...
 ```
 
 ```python
-# agent_reach/platforms/bilibili/read.py
+# omnihub/platforms/bilibili/read.py
 def read(target, *, params, ctx):
     ...
 ```
@@ -325,7 +325,7 @@ def read(target, *, params, ctx):
 ### 6.1 工具清单
 
 ```yaml
-# agent_reach/tools/opencli.yaml
+# omnihub/tools/opencli.yaml
 id: opencli
 kind: cli
 install:
@@ -424,9 +424,9 @@ capabilities: [search, read, browser]
 两种模式：
 
 ```bash
-agent-reach search "query"                 # 只返回链接 + 摘要
-agent-reach search "query" --enrich 3      # 自动读取前 3 条
-agent-reach read <url>                     # Agent 自己挑
+omnihub search "query"                 # 只返回链接 + 摘要
+omnihub search "query" --enrich 3      # 自动读取前 3 条
+omnihub read <url>                     # Agent 自己挑
 ```
 
 `--enrich` 规则：
@@ -483,8 +483,8 @@ aggregate:
 
 ```
 内置 manifest 默认值
-  └─ ~/.agent-reach/config/*.yaml
-       └─ ./.agent-reach/config/*.yaml
+  └─ ~/.omnihub/config/*.yaml
+       └─ ./.omnihub/config/*.yaml
             └─ 环境变量 / secrets
                  └─ CLI 参数
 ```
@@ -500,7 +500,7 @@ aggregate:
 ## 9. 目录结构
 
 ```
-agent_reach/
+omnihub/
   core/
     registry.py            # 扫描/加载/校验平台与工具清单
     router.py              # 平台优先级、intent、first_success/aggregate
@@ -528,7 +528,7 @@ agent_reach/
 用户侧：
 
 ```
-~/.agent-reach/
+~/.omnihub/
   config/
     routing.yaml
     platforms/<id>.yaml     # 覆盖内置平台
@@ -544,9 +544,9 @@ agent_reach/
 
 ### 10.1 发现顺序
 
-1. 包内 `agent_reach/platforms/*/platform.yaml`
-2. 用户插件 `~/.agent-reach/plugins/*/platform.yaml`
-3. 可选：Python entry point `agent_reach.plugins`
+1. 包内 `omnihub/platforms/*/platform.yaml`
+2. 用户插件 `~/.omnihub/plugins/*/platform.yaml`
+3. 可选：Python entry point `omnihub.plugins`
 
 同名时用户目录覆盖内置，`extends: builtin:<id>` 表示增量覆盖。
 
@@ -554,7 +554,7 @@ agent_reach/
 
 - 删除平台目录即下线；registry 只扫描存在的目录。
 - 不维护中心 import 列表。
-- `agent-reach platforms` 与 SKILL.md 自动更新。
+- `omnihub platforms` 与 SKILL.md 自动更新。
 
 ### 10.3 依赖
 
@@ -581,7 +581,7 @@ requires:
 - **凭据**：`ctx.secret(key)`；日志与错误消息脱敏；不把 Cookie/Token 放进 `raw`。
 - **限流**：平台级 cooldown（`RATE_LIMITED` / `PLATFORM_BLOCKED`）+ 来源级 pause（`TIMEOUT` / `UPSTREAM_BROKEN` / `NEED_SETUP`），状态跨进程持久化；来源可声明 `min_interval`，核心限制上限。
 - **daemon**：只允许 loopback；校验地址来自本地配置文件；不对外暴露。
-- **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust-plugin <id>`（或 `REACH_TRUSTED_PLUGINS`），并声明所需能力（`http` / `exec` / `browser`）。
+- **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust-plugin <id>`（或 `OMNIHUB_TRUSTED_PLUGINS`），并声明所需能力（`http` / `exec` / `browser`）。
 
 ---
 
@@ -641,7 +641,7 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 | `core/doctor.py` | 新实现 | 工具、适配器、必需/可选凭据、builtin auth.status；不联网、不泄露值 |
 | `core/pipeline.py` source `when` | 新实现 | `secret:NAME` / `tool:NAME`；不满足记为 `SKIP` |
 | `core/template.py` 过滤器 | 新实现 | `urlencode` / `lower` / `upper` / `strip`；查询值安全入 URL |
-| `agent_reach/parse/web.py` | M1 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
+| `omnihub/parse/web.py` | M1 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
 
 ### 已落地（M3）
 
@@ -701,13 +701,13 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 
 **验收**
 
-- `agent-reach platforms` 能列出 `noop` 及其动作/优先级。
+- `omnihub platforms` 能列出 `noop` 及其动作/优先级。
 - 删除 `noop` 目录后命令仍正常，列表不再包含它。
 - 现有 Agent-Reach 测试中与 dispatch/envelope 相关的契约全部通过。
 
 **验收结果**
 
-- `python -m agent_reach.cli platforms` 输出 `noop`（search/read）。
+- `python -m omnihub.cli platforms` 输出 `noop`（search/read）。
 - 删除目录的下线能力由 `tests/test_registry.py::test_deleting_directory_removes_platform`
   覆盖；manifest 错误、目录名不匹配、依赖缺失也会被隔离并报告。
 - envelope 由 `tests/test_schema.py` 按 JSON Schema 校验。
@@ -732,15 +732,15 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 
 **验收**
 
-- `agent-reach web search` 与 `read` 完全走 manifest。
+- `omnihub web search` 与 `read` 完全走 manifest。
 - 错误码、超时、`meta.attempts` 与旧实现一致。
 - OpenCLI 的 YAML 错误块能被正确识别并映射。
 
 **验收结果**
 
-- `python -m agent_reach.cli search "yt-dlp github repository" --platform web --limit 2`
+- `python -m omnihub.cli search "yt-dlp github repository" --platform web --limit 2`
   返回 Exa 结果，`backend: exa`。
-- `python -m agent_reach.cli read https://example.com --platform web`
+- `python -m omnihub.cli read https://example.com --platform web`
   返回 Jina 正文，`backend: jina`。
 - `tests/test_web_platform.py` 覆盖 Exa SSE、Jina header、antibot、Jina→Exa
   回退；`tests/test_adapters.py` 覆盖 OpenCLI YAML 错误映射。
@@ -841,13 +841,13 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 **已完成**
 
-- 插件发现：`$REACH_PLUGIN_PATH`、`~/.agent-reach/plugins/`、
-  `./.agent-reach/plugins/`，同名覆盖内置；删除目录即下线。
+- 插件发现：`$OMNIHUB_PLUGIN_PATH`、`~/.omnihub/plugins/`、
+  `./.omnihub/plugins/`，同名覆盖内置；删除目录即下线。
 - `plugin validate [PATH...]` / `plugin list`：只校验不执行；检查 schema、
   目录名与 id、跨文件引用、Python hooks 与能力声明，输出 errors/warnings。
 - 插件信任：纯清单插件直接加载；带 `search.py` / `read.py` / `parse.py` / `transcribe.py`
   的插件必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写
-  `[]`），并在 `--trust-plugin <id>` 或 `REACH_TRUSTED_PLUGINS` 后才执行。
+  `[]`），并在 `--trust-plugin <id>` 或 `OMNIHUB_TRUSTED_PLUGINS` 后才执行。
   未信任时平台仍可被发现，运行时返回 `NEED_SETUP`。
 - `explain` 增加 `platforms[]`：按计划顺序列出平台来源的 adapter、name、
   priority、`when`、`parse`、`disabled`；`--text` 同步展示。
@@ -905,8 +905,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 **M5 统一限流与冷却（2026-10-25）**
 
-- `core/ratelimit.py`：跨进程账本 `~/.agent-reach/state/rate_limits.json`
-  （`REACH_STATE_DIR` 可改路径；目录 0700、文件 0600，原子替换，POSIX 下
+- `core/ratelimit.py`：跨进程账本 `~/.omnihub/state/rate_limits.json`
+  （`OMNIHUB_STATE_DIR` 可改路径；目录 0700、文件 0600，原子替换，POSIX 下
   `flock` 串行化读改写）。只记录平台/来源名、错误码与时间戳，不记录输入、
   URL 或凭据；损坏或不可写时 fail open。
 - 两级暂停：`RATE_LIMITED` / `PLATFORM_BLOCKED` 冷却整个平台（默认 300s /
@@ -916,7 +916,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - pipeline 在调用适配器前检查暂停：命中时写 `result: SKIP` 的 attempt，
   带 `reason` 与 `retry_after_seconds`，不发起网络/进程调用；成功调用清除
   该来源暂停。最终错误的 `error.retry_after_seconds` 暴露剩余秒数
-  （`ReachError` 新增可选字段，`envelope` 仅在存在时输出，schema_version
+  （`OmniHubError` 新增可选字段，`envelope` 仅在存在时输出，schema_version
   仍为 1）。
 - `Context` 的 HTTP 429/403 解析 `Retry-After`（秒数或 HTTP 日期）。
 - source 可声明 `min_interval`（秒），核心 `clamp_min_interval` 限制在 10s
@@ -984,7 +984,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   builtin 或显式信任的平台调用；未信任平台返回 `NEED_SETUP`。
 - SPA 的 `load` 事件经常不触发。`navigate` 超时后不再直接失败：先用
   `list_tabs` 复用当前 session 标签，否则从 `list_browser_tabs` 里按
-  `group_title`、目标 URL、同 host 且属于 `reach:` 分组的顺序恢复并
+  `group_title`、目标 URL、同 host 且属于 `omnihub:` 分组的顺序恢复并
   `attach_tab`；恢复失败才返回原始超时。
 - 新平台（均为 `level: optional`，`capabilities: [browser]`；daemon 来源
   用 `when: adapter:daemon` 保护，daemon 缺失时平台在 `doctor` 中为
@@ -1018,17 +1018,17 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 **M5 浏览器标签页清理（2026-10-25）**
 
-- `read` / `browse` 每次调用生成独立 session（`reach-<platform>-<随机后缀>`），
+- `read` / `browse` 每次调用生成独立 session（`omnihub-<platform>-<随机后缀>`），
   `finally` 中调用 `close_session`，成功、业务错误、超时都会关闭本次查询的
   全部标签页。独立 session 让并发的 `search --enrich` 读取不会互相关闭对方
   的标签。
 - 清理是 best effort：`close_session` 失败被吞掉，不能覆盖动作本身的错误。
   清理使用独立的 5s 超时，不复用动作可能很长的超时。
-- 超时恢复只接管 `reach:` 分组内的标签（`tagged` / `same_page_owned` /
+- 超时恢复只接管 `omnihub:` 分组内的标签（`tagged` / `same_page_owned` /
   `same_host_owned`）。此前 `same_page` 可能匹配 URL 相同的用户标签；自动
   关闭后这会误关用户页面，因此收紧为仅限自己的分组。
 - **验收结果**：`python -m pytest` 333 项通过；真实 `check --platform
-  linkedin --action search` 后 `list_browser_tabs` 中 `reach:` 标签为 0。
+  linkedin --action search` 后 `list_browser_tabs` 中 `omnihub:` 标签为 0。
 
 **M5 工具型平台补充（2026-10-25）**
 
@@ -1055,7 +1055,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 - 每个平台的 fixture 解析测试
 - 适配器单测（本地 fake binary / fake HTTP server）
-- `agent-reach check` live 回归
+- `omnihub check` live 回归
 - 文档、迁移指南、发布验收
 
 **验收**
@@ -1078,7 +1078,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
 | 限流 | 注入时钟/路径；冷却合并、来源隔离、平台回退、pacing、active/clear、损坏文件与权限 |
 | 删除 | 删除平台目录后 registry 仍可加载 |
-| live | 显式开启；`agent-reach check --platform <id>`（`--dry-run` 离线列出计划） |
+| live | 显式开启；`omnihub check --platform <id>`（`--dry-run` 离线列出计划） |
 
 测试隔离沿用现有做法：临时 HOME、禁用真实网络与 OpenCLI 调用。
 
@@ -1101,7 +1101,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 ## 16. 待确认事项
 
-1. 落地仓库最终名称：`services/reach-platforms/` 还是其他。
+1. 落地仓库最终名称：`services/omnihub/` 还是其他。
 2. 是否直接复制 Agent-Reach 代码作为起点（保留 MIT 声明），还是 clean-room 只借鉴架构。
 3. 第三方插件是否允许发布为 pip 包（entry points），首版是否只支持本地目录。
 4. 平台包是否需要独立版本号（`platform.yaml: version`）。
@@ -1117,7 +1117,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | `channels/base.py:30-49` `Action.backends` | `platform.yaml` 的 `sources[].priority` |
 | `channels/__init__.py:24-39` 静态列表 | `core/registry.py` 目录扫描 |
 | `runtime/dispatch.py:200` `run_action` | `core/pipeline.py` + `core/router.py` |
-| `runtime/tools.py:52-68` `TOOLS` | `agent_reach/tools/*.yaml` + `adapters/*` |
+| `runtime/tools.py:52-68` `TOOLS` | `omnihub/tools/*.yaml` + `adapters/*` |
 | `runtime/manage.py:954` `CONFIG_KEYS` | `core/config.py` 分层配置 |
 | `runtime/public_web.py:56-64` | `platforms/web/` 的公共来源 + 平台 `public_web.scopes` |
 | `backends/opencli.py:59` | `adapters/opencli.py` |

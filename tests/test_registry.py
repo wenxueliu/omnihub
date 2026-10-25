@@ -4,7 +4,7 @@ import shutil
 
 import yaml
 
-from agent_reach.core.registry import discover
+from omnihub.core.registry import discover
 
 
 def test_discovers_builtin_noop():

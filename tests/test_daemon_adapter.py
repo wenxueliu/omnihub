@@ -4,19 +4,19 @@ import json
 
 import pytest
 
-from agent_reach.adapters.base import RawResult, ToolCall
-from agent_reach.adapters.daemon import (
+from omnihub.adapters.base import RawResult, ToolCall
+from omnihub.adapters.daemon import (
     DaemonAdapter,
     discover_address,
     normalize_address,
 )
-from agent_reach.core.result import (
+from omnihub.core.result import (
     BAD_INPUT,
     NEED_LOGIN,
     NEED_SETUP,
     PLATFORM_BLOCKED,
     TIMEOUT,
-    ReachError,
+    OmniHubError,
 )
 
 
@@ -128,7 +128,7 @@ def test_probe_reports_running_daemon_and_extension(tmp_path):
 
 def test_probe_is_offline_when_daemon_is_down(tmp_path):
     def down(url, payload):
-        raise ReachError(NEED_SETUP, "cannot reach the local daemon at 127.0.0.1:1")
+        raise OmniHubError(NEED_SETUP, "cannot reach the local daemon at 127.0.0.1:1")
 
     health = _adapter(down, tmp_path).probe()
     assert health.ok is False
@@ -138,7 +138,7 @@ def test_probe_is_offline_when_daemon_is_down(tmp_path):
 def test_invoke_passes_through_a_snapshot_command(tmp_path):
     def handler(url, payload):
         assert payload["action"] == "list_tabs"
-        assert payload["session"] == "reach-web"
+        assert payload["session"] == "omnihub-web"
         return _ok({"success": True, "tabs": []})
 
     adapter = _adapter(handler, tmp_path)
@@ -147,7 +147,7 @@ def test_invoke_passes_through_a_snapshot_command(tmp_path):
         ctx=adapter._context,
     )
     assert result.data == {"success": True, "tabs": []}
-    assert result.meta["session"] == "reach-web"
+    assert result.meta["session"] == "omnihub-web"
     assert _actions(adapter._context) == ["list_tabs"]
 
 
@@ -204,7 +204,7 @@ def test_daemon_read_navigates_and_pages_until_budget(tmp_path):
     assert _actions(adapter._context)[-1] == "close_session"
     sessions = {call["payload"]["session"] for call in adapter._context.calls}
     assert len(sessions) == 1
-    assert next(iter(sessions)).startswith("reach-web-")
+    assert next(iter(sessions)).startswith("omnihub-web-")
 
 
 def test_daemon_read_stops_cleanly_on_expired_cursor(tmp_path):
@@ -249,7 +249,7 @@ def test_daemon_extension_missing_maps_to_setup_error(tmp_path):
         return _error("extension_not_connected", "open the extension")
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             ToolCall(
                 adapter="daemon",
@@ -269,7 +269,7 @@ def test_daemon_read_rejects_private_targets(tmp_path):
         return _closed() if payload["action"] == "close_session" else _ok({})
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             ToolCall(
                 adapter="daemon",
@@ -349,7 +349,7 @@ def test_daemon_browse_navigates_waits_and_decodes_json(tmp_path):
     assert _actions(adapter._context)[-1] == "close_session"
     sessions = {call["payload"]["session"] for call in adapter._context.calls}
     assert len(sessions) == 1
-    assert next(iter(sessions)).startswith("reach-example-")
+    assert next(iter(sessions)).startswith("omnihub-example-")
 
 
 def test_daemon_browse_maps_login_redirect_without_evaluating(tmp_path):
@@ -371,7 +371,7 @@ def test_daemon_browse_maps_login_redirect_without_evaluating(tmp_path):
         )
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             _browse_call(login_url="/login"),
             ctx=adapter._context,
@@ -397,7 +397,7 @@ def test_daemon_browse_maps_structured_login_and_blocked_markers(tmp_path):
         ({"blocked": True, "message": "captcha"}, PLATFORM_BLOCKED),
     ):
         adapter = _adapter(reply(value), tmp_path)
-        with pytest.raises(ReachError) as info:
+        with pytest.raises(OmniHubError) as info:
             adapter.invoke(_browse_call(), ctx=adapter._context)
         assert info.value.code == code
         assert value["message"] in info.value.message
@@ -411,7 +411,7 @@ def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
         action = payload["action"]
         calls.append(action)
         if action == "navigate":
-            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+            return OmniHubError(TIMEOUT, "navigate: page load timeout (30s)")
         if action == "list_tabs":
             return _ok({"success": True, "tabs": []})
         if action == "list_browser_tabs":
@@ -422,7 +422,7 @@ def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
                         {
                             "tabId": 7,
                             "url": "https://example.com/search?q=x",
-                            "groupTitle": "reach: test",
+                            "groupTitle": "omnihub: test",
                         },
                     ]
                 }
@@ -451,7 +451,7 @@ def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
 
     adapter = _adapter(handler, tmp_path)
     result = adapter.invoke(
-        _browse_call(group_title="reach: test", wait_for=None),
+        _browse_call(group_title="omnihub: test", wait_for=None),
         ctx=adapter._context,
     )
     assert result.data == [{"title": "One", "url": "https://example.com/1"}]
@@ -469,7 +469,7 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
         action = payload["action"]
         calls.append(action)
         if action == "navigate":
-            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+            return OmniHubError(TIMEOUT, "navigate: page load timeout (30s)")
         if action == "list_tabs":
             return _ok(
                 {
@@ -479,7 +479,7 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
                         {
                             "tabId": 9,
                             "url": "https://example.com/",
-                            "groupTitle": "reach: test",
+                            "groupTitle": "omnihub: test",
                         },
                     ],
                 }
@@ -499,7 +499,7 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
 
     adapter = _adapter(handler, tmp_path)
     result = adapter.invoke(
-        _browse_call(group_title="reach: test"), ctx=adapter._context
+        _browse_call(group_title="omnihub: test"), ctx=adapter._context
     )
     assert result.data == {"title": "One", "url": "https://example.com/1"}
     assert result.meta["tab_id"] == 9
@@ -510,7 +510,7 @@ def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
 def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
     def handler(url, payload):
         if payload["action"] == "navigate":
-            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+            return OmniHubError(TIMEOUT, "navigate: page load timeout (30s)")
         if payload["action"] == "list_tabs":
             return _ok({"success": True, "tabs": []})
         if payload["action"] == "list_browser_tabs":
@@ -520,9 +520,9 @@ def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
         raise AssertionError("browse should stop before evaluating")
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
-            _browse_call(group_title="reach: test", wait_for=None),
+            _browse_call(group_title="omnihub: test", wait_for=None),
             ctx=adapter._context,
         )
     assert info.value.code == TIMEOUT
@@ -532,7 +532,7 @@ def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
 def test_daemon_browse_does_not_borrow_a_user_tab_after_timeout(tmp_path):
     def handler(url, payload):
         if payload["action"] == "navigate":
-            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+            return OmniHubError(TIMEOUT, "navigate: page load timeout (30s)")
         if payload["action"] == "list_tabs":
             return _ok({"success": True, "tabs": []})
         if payload["action"] == "list_browser_tabs":
@@ -552,9 +552,9 @@ def test_daemon_browse_does_not_borrow_a_user_tab_after_timeout(tmp_path):
         raise AssertionError("a user tab must not be attached or evaluated")
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
-            _browse_call(group_title="reach: example search", wait_for=None),
+            _browse_call(group_title="omnihub: example search", wait_for=None),
             ctx=adapter._context,
         )
     assert info.value.code == TIMEOUT
@@ -570,7 +570,7 @@ def test_daemon_browse_requires_a_trusted_platform(tmp_path):
         return _ok({})
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             ToolCall(
                 adapter="daemon",
@@ -589,7 +589,7 @@ def test_daemon_browse_rejects_private_targets(tmp_path):
         return _closed() if payload["action"] == "close_session" else _ok({})
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             _browse_call(url="http://127.0.0.1/secret"),
             ctx=adapter._context,
@@ -631,7 +631,7 @@ def test_daemon_tab_cleanup_uses_a_fresh_session_per_invocation(tmp_path):
     assert len(set(navigations)) == 2
     assert len(closes) == 2
     assert set(navigations) == set(closes)
-    assert all(session.startswith("reach-web-") for session in navigations)
+    assert all(session.startswith("omnihub-web-") for session in navigations)
 
 
 def test_daemon_tab_cleanup_failure_does_not_mask_the_action_error(tmp_path):
@@ -639,11 +639,11 @@ def test_daemon_tab_cleanup_failure_does_not_mask_the_action_error(tmp_path):
         if payload["action"] == "navigate":
             return _ok({"success": True, "url": "https://example.com/"})
         if payload["action"] == "close_session":
-            return ReachError(UPSTREAM_BROKEN, "daemon went away during cleanup")
+            return OmniHubError(UPSTREAM_BROKEN, "daemon went away during cleanup")
         return _ok({"type": "object", "value": {"blocked": True, "message": "captcha"}})
 
     adapter = _adapter(handler, tmp_path)
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(_browse_call(), ctx=adapter._context)
     assert info.value.code == PLATFORM_BLOCKED
     assert _actions(adapter._context)[-1] == "close_session"
@@ -658,7 +658,7 @@ def test_daemon_address_override_cannot_leave_loopback(tmp_path):
     health = adapter.probe()
     assert health.ok is False
     assert "non-loopback" in health.detail
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         adapter.invoke(
             ToolCall(adapter="daemon", call="list_tabs", args={}, raw={}),
             ctx=adapter._context,

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_reach.adapters.base import RawResult
-from agent_reach.parse.generic import ParseError, extract_items, loads_json, parse_with_chain
-from agent_reach.parse.web import exa_read
+from omnihub.adapters.base import RawResult
+from omnihub.parse.generic import ParseError, extract_items, loads_json, parse_with_chain
+from omnihub.parse.web import exa_read
 
 
 def test_loads_json_from_noisy_stdout():

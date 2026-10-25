@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "reach-platforms"
+name = "omnihub"
 version = "0.1.0"
 description = "Config-driven, platform-centric internet access for AI agents"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "reach-platforms contributors" }]
+authors = [{ name = "omnihub contributors" }]
 dependencies = [
   "pyyaml>=6.0",
   "jsonschema>=4.18",
@@ -20,12 +20,11 @@ dependencies = [
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-reach-platforms = "agent_reach.cli:main"
-agent-reach = "agent_reach.cli:main"
-xiaohongshu-cli = "agent_reach.xiaohongshu_cli:main"
+omnihub = "omnihub.cli:main"
+xiaohongshu-cli = "omnihub.xiaohongshu_cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent_reach"]
+packages = ["omnihub"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

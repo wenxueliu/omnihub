@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from agent_reach.adapters.base import ADAPTER_KINDS
-from agent_reach.core.registry import BUILTIN_PLATFORM_DIR, discover
+from omnihub.adapters.base import ADAPTER_KINDS
+from omnihub.core.registry import BUILTIN_PLATFORM_DIR, discover
 
 
 def _builtin_dirs():

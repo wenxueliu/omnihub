@@ -10,26 +10,26 @@ manifest + 共享执行核心”。一个平台就是一个目录：删掉目录
 
 | 旧结构 | 新结构 |
 |---|---|
-| `agent_reach/channels/<name>.py` | `agent_reach/platforms/<id>/platform.yaml` |
+| `agent_reach/channels/<name>.py` | `omnihub/platforms/<id>/platform.yaml` |
 | `Channel.name` | manifest `id`（必须与目录名一致） |
 | channel 的 `search` / `read` 方法 | `actions.search` / `actions.read` |
 | 代码里写死的后端顺序 | `sources[].priority`（越小越优先） |
 | channel 内部的超时、重试、冷却 | 共享 `core/policy.py` 与 `core/ratelimit.py` |
 | `channels/__init__.py` 静态列表 | 目录发现（内置 + 插件根） |
 | 解析逻辑散落在 channel 内 | `parse/*.py` 或带夹具的平台 `parse.py` |
-| `~/.agent-reach/state.json` | `~/.agent-reach/state/rate_limits.json` |
+| `~/.agent-reach/state.json` | `~/.omnihub/state/rate_limits.json` |
 
 ### 1.2 迁移步骤
 
 1. **盘点旧 channel**：列出 action、参数、后端顺序、错误码映射、凭据。
-2. **建目录**：`agent_reach/platforms/<id>/platform.yaml`，先声明 `id`、
+2. **建目录**：`omnihub/platforms/<id>/platform.yaml`，先声明 `id`、
    `description`、`level`、`priority`、`domains`、`capabilities`。
 3. **搬来源**：每个后端一条 `sources`，保留原顺序为 `priority` 10/20/…。
    能用现有 adapter（`http` / `cli` / `opencli` / `daemon` / `builtin`）
    就不要写平台代码。
 4. **搬解析**：通用 JSON/Markdown 走 `parse/*`；平台专用解析放
    `platforms/<id>/parse.py`（仅内置平台自动受信任）。
-5. **声明检查**：加 `check.search` / `check.read`，让 `reach-platforms check`
+5. **声明检查**：加 `check.search` / `check.read`，让 `omnihub check`
    覆盖主路径。
 6. **补测试**：`platforms/<id>/fixtures/` 放真实响应样本，至少一个
    search、一个 read；在 `tests/test_platform_contracts.py` 加契约断言。
@@ -109,7 +109,7 @@ actions:
 
 ## 3. 删除或禁用平台
 
-- **删除**：直接删 `agent_reach/platforms/<id>/`。registry、`platforms`、
+- **删除**：直接删 `omnihub/platforms/<id>/`。registry、`platforms`、
   `skill`、`check` 都会自动不再包含它。
 - **临时禁用**：在 `routing.yaml` 写 `platforms: {<id>: {enabled: false}}`，
   或给来源加 `disabled: true`；目录保留，便于恢复。
@@ -120,14 +120,14 @@ actions:
 ```bash
 # 离线
 python -m pytest -q
-python -m agent_reach.cli plugin validate ~/.agent-reach/plugins
-python -m agent_reach.cli doctor --text
-python -m agent_reach.cli check --dry-run --text
+python -m omnihub.cli plugin validate ~/.omnihub/plugins
+python -m omnihub.cli doctor --text
+python -m omnihub.cli check --dry-run --text
 
 # 联网（显式）
-python -m agent_reach.cli check --platform <id> --text
-python -m agent_reach.cli search "<query>" --platform <id> --limit 3 --text
-python -m agent_reach.cli read "<url>" --platform <id> --text
+python -m omnihub.cli check --platform <id> --text
+python -m omnihub.cli search "<query>" --platform <id> --limit 3 --text
+python -m omnihub.cli read "<url>" --platform <id> --text
 ```
 
 新平台合入前至少满足：

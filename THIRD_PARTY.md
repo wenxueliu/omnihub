@@ -14,28 +14,28 @@ Copied files:
 
 | Target | Source | Changes |
 |---|---|---|
-| `agent_reach/core/result.py` | `agent_reach/runtime/result.py` | added `BUSY` constant, optional item provenance, `meta` merge |
-| `agent_reach/core/clock.py` | `agent_reach/runtime/clock.py` | none |
-| `agent_reach/utils/url.py` | `agent_reach/utils/url.py` | none |
-| `agent_reach/utils/text.py` | `agent_reach/utils/text.py` | none |
-| `agent_reach/utils/process.py` | `agent_reach/utils/process.py` | none |
+| `omnihub/core/result.py` | `agent_reach/runtime/result.py` | added `BUSY` constant, optional item provenance, `meta` merge |
+| `omnihub/core/clock.py` | `agent_reach/runtime/clock.py` | none |
+| `omnihub/utils/url.py` | `agent_reach/utils/url.py` | none |
+| `omnihub/utils/text.py` | `agent_reach/utils/text.py` | none |
+| `omnihub/utils/process.py` | `agent_reach/utils/process.py` | none |
 
 M1 adaptations:
 
 | Target | Source | Changes |
 |---|---|---|
-| `agent_reach/core/context.py` | `agent_reach/runtime/run.py` | subprocess logic moved behind `Context.run`; bounded stdout/stderr readers; process-group timeout kill; argv-only (no shell); added HTTP client with redirect re-validation, secret lookup and output caps |
-| `agent_reach/adapters/opencli.py` | `agent_reach/backends/opencli.py` | kept YAML `ok: false` error-block detection and status mapping; invocation rebuilt as explicit argv with `-f json`; no shell |
-| `agent_reach/parse/web.py` | `agent_reach/channels/web.py` | Exa JSON-RPC/SSE payload extraction, Jina Reader header/content parsing and anti-bot detection; moved from the web platform to a shared parser module |
-| `agent_reach/adapters/cli.py` | `agent_reach/runtime/run.py` | command construction separated from execution; mapping helpers only |
+| `omnihub/core/context.py` | `agent_reach/runtime/run.py` | subprocess logic moved behind `Context.run`; bounded stdout/stderr readers; process-group timeout kill; argv-only (no shell); added HTTP client with redirect re-validation, secret lookup and output caps |
+| `omnihub/adapters/opencli.py` | `agent_reach/backends/opencli.py` | kept YAML `ok: false` error-block detection and status mapping; invocation rebuilt as explicit argv with `-f json`; no shell |
+| `omnihub/parse/web.py` | `agent_reach/channels/web.py` | Exa JSON-RPC/SSE payload extraction, Jina Reader header/content parsing and anti-bot detection; moved from the web platform to a shared parser module |
+| `omnihub/adapters/cli.py` | `agent_reach/runtime/run.py` | command construction separated from execution; mapping helpers only |
 
 M2 adaptations:
 
 | Target | Source | Changes |
 |---|---|---|
-| `agent_reach/platforms/github/parse.py`, `read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
-| `agent_reach/platforms/v2ex/parse.py`, `read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
-| `agent_reach/platforms/bilibili/parse.py` | `agent_reach/channels/bilibili.py` | kept the AI/CC subtitle item shape (title, author, publish time, cue text) and Bilibili API error mapping. The `bili-cli` transport is gone: the browser source resolves `cid` and the signed subtitle URL, and the parser downloads the JSON through `ctx.http` with a Bilibili Referer. No cookie store or `BILIBILI_COOKIE` |
+| `omnihub/platforms/github/parse.py`, `read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
+| `omnihub/platforms/v2ex/parse.py`, `read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
+| `omnihub/platforms/bilibili/parse.py` | `agent_reach/channels/bilibili.py` | kept the AI/CC subtitle item shape (title, author, publish time, cue text) and Bilibili API error mapping. The `bili-cli` transport is gone: the browser source resolves `cid` and the signed subtitle URL, and the parser downloads the JSON through `ctx.http` with a Bilibili Referer. No cookie store or `BILIBILI_COOKIE` |
 
 No upstream copyright notices were removed.
 

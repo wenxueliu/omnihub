@@ -1,0 +1,197 @@
+id: linkedin
+description: LinkedIn job search and job posting reads through the public guest API in the browser.
+version: 1
+level: optional
+priority: 190
+capabilities: [browser]
+
+check:
+  search: {query: "python", limit: 2}
+  read:
+    target: "https://www.linkedin.com/jobs/view/4379639599/"
+
+domains:
+  - linkedin.com
+  - www.linkedin.com
+
+requires:
+  adapters: []
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Job keywords.
+      location:
+        type: str
+        default: ""
+        description: Optional job location filter.
+      limit:
+        type: int
+        default: 10
+        minimum: 1
+        maximum: 25
+        description: Maximum number of jobs.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "https://www.linkedin.com/jobs/search/?keywords=${query|urlencode}&location=${location|urlencode}"
+          wait_for: "body"
+          wait_ms: 10000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: linkedin search"
+          login_url:
+            - "/authwall"
+            - "/login"
+          code: |
+            (async () => {
+              const params = new URLSearchParams(location.search);
+              const keywords = params.get('keywords') || '';
+              const locationFilter = params.get('location') || '';
+              const endpoint = '/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords='
+                + encodeURIComponent(keywords)
+                + '&location=' + encodeURIComponent(locationFilter)
+                + '&start=0';
+              const response = await fetch(endpoint, {credentials: 'same-origin'});
+              if (!response.ok) {
+                return JSON.stringify({
+                  blocked: true,
+                  message: 'linkedin guest job search returned HTTP ' + response.status
+                });
+              }
+              const html = await response.text();
+              const decode = (value) => value
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&nbsp;/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+              const pick = (chunk, pattern) => {
+                const match = chunk.match(pattern);
+                return match ? decode(match[1]) : null;
+              };
+              const items = [];
+              const seen = new Set();
+              for (const chunk of html.split(/<li\b/).slice(1)) {
+                const hrefMatch = chunk.match(/href="([^"]*\/jobs\/view\/[^"]*)"/);
+                if (!hrefMatch) continue;
+                const url = hrefMatch[1]
+                  .replace(/&amp;/g, '&')
+                  .split('?')[0];
+                const idMatch = url.match(/\/jobs\/view\/(?:.*-)?(\d+)/);
+                if (!idMatch || seen.has(idMatch[1])) continue;
+                seen.add(idMatch[1]);
+                const timeMatch = chunk.match(/<time[^>]*datetime="([^"]+)"/);
+                items.push({
+                  title: pick(chunk, /base-search-card__title"[^>]*>([\s\S]*?)<\//) || 'Job ' + idMatch[1],
+                  url,
+                  author: pick(chunk, /base-search-card__subtitle"[^>]*>([\s\S]*?)<\//),
+                  published_at: timeMatch ? timeMatch[1] : null,
+                  text: pick(chunk, /job-search-card__location"[^>]*>([\s\S]*?)<\//)
+                });
+              }
+              if (!items.length) {
+                if (location.href.includes('/authwall') || location.href.includes('/login')) {
+                  return JSON.stringify({login: true, message: 'linkedin requires a logged-in browser session'});
+                }
+                return JSON.stringify({not_found: true, message: 'linkedin guest search returned no jobs'});
+              }
+              return JSON.stringify(items);
+            })()
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 3
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: LinkedIn job posting URL containing the numeric job id.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "${target}"
+          wait_for: "body"
+          wait_ms: 10000
+          limit: 1
+          new_tab: false
+          group_title: "omnihub: linkedin read"
+          login_url:
+            - "/authwall"
+            - "/login"
+          code: |
+            (async () => {
+              const idMatch = location.pathname.match(/\/jobs\/view\/(?:.*-)?(\d+)/);
+              if (!idMatch) {
+                return JSON.stringify({not_found: true, message: 'url has no linkedin job id'});
+              }
+              const response = await fetch(
+                '/jobs-guest/jobs/api/jobPosting/' + idMatch[1],
+                {credentials: 'same-origin'}
+              );
+              if (response.status === 404) {
+                return JSON.stringify({not_found: true, message: 'linkedin job posting not found'});
+              }
+              if (!response.ok) {
+                return JSON.stringify({
+                  blocked: true,
+                  message: 'linkedin job posting returned HTTP ' + response.status
+                });
+              }
+              const html = await response.text();
+              const decode = (value) => value
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<\/(p|li|div|h\d)>/gi, '\n')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'")
+                .replace(/&nbsp;/g, ' ')
+                .replace(/[ \t]+/g, ' ')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+              const pick = (pattern) => {
+                const match = html.match(pattern);
+                return match ? decode(match[1]) : null;
+              };
+              const title = pick(/top-card-layout__title[^>]*>([\s\S]*?)<\/h2>/)
+                || pick(/<h1[^>]*>([\s\S]*?)<\/h1>/);
+              const company = pick(/topcard__org-name-link[^>]*>([\s\S]*?)<\/a>/)
+                || pick(/topcard__flavor[^>]*>([\s\S]*?)<\/a>/);
+              const text = pick(/show-more-less-html__markup[^>]*>([\s\S]*?)<\/div>/)
+                || pick(/description__text[^>]*>([\s\S]*?)<\/div>/)
+                || pick(/<body[^>]*>([\s\S]*?)<\/body>/);
+              if (!text) {
+                return JSON.stringify({not_found: true, message: 'job posting has no description'});
+              }
+              return JSON.stringify({
+                url: 'https://www.linkedin.com/jobs/view/' + idMatch[1] + '/',
+                title: title || 'LinkedIn job ' + idMatch[1],
+                author: company,
+                text
+              });
+            })()
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 60
+        min_interval: 3

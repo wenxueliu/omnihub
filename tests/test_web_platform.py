@@ -4,12 +4,12 @@ import json
 
 import pytest
 
-from agent_reach.adapters.base import Health, RawResult
-from agent_reach.adapters.registry import build_adapters
-from agent_reach.core.pipeline import run_action
-from agent_reach.core.registry import BUILTIN_PLATFORM_DIR, discover, load_platform
-from agent_reach.core.result import RATE_LIMITED, UPSTREAM_BROKEN, ReachError
-from agent_reach.parse import web as web_parser
+from omnihub.adapters.base import Health, RawResult
+from omnihub.adapters.registry import build_adapters
+from omnihub.core.pipeline import run_action
+from omnihub.core.registry import BUILTIN_PLATFORM_DIR, discover, load_platform
+from omnihub.core.result import RATE_LIMITED, UPSTREAM_BROKEN, OmniHubError
+from omnihub.parse import web as web_parser
 
 WEB_DIR = BUILTIN_PLATFORM_DIR / "web"
 
@@ -74,14 +74,14 @@ def test_exa_search_rate_limit_is_mapped():
     parser = _web_parser()
     message = {"jsonrpc": "2.0", "id": 1, "error": {"code": 429, "message": "rate limit"}}
     raw = RawResult(text="data: " + json.dumps(message))
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.exa_search(raw)
     assert info.value.code == RATE_LIMITED
 
 
 def test_exa_search_unrecognized_response_is_upstream_broken():
     parser = _web_parser()
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.exa_search(RawResult(text="not json"))
     assert info.value.code == UPSTREAM_BROKEN
 
@@ -113,7 +113,7 @@ def test_jina_antibot_page_is_upstream_broken():
     parser = _web_parser()
     body = "Title: Just a moment...\nWarning: requiring captcha\n## Performing security verification\n"
     raw = RawResult(text=body, meta={"params": {"target": "https://example.com/"}})
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.jina(raw)
     assert info.value.code == UPSTREAM_BROKEN
 

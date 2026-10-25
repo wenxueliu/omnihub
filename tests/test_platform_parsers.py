@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_reach.adapters.base import RawResult
-from agent_reach.core.result import NOT_FOUND, UPSTREAM_BROKEN, ReachError
+from omnihub.adapters.base import RawResult
+from omnihub.core.result import NOT_FOUND, UPSTREAM_BROKEN, OmniHubError
 
-PLATFORMS = Path(__file__).resolve().parents[1] / "agent_reach" / "platforms"
+PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 
 
 def _load(platform: str, filename: str):
@@ -30,7 +30,7 @@ def _fixture(platform: str, name: str):
 
 @pytest.fixture(autouse=True)
 def _isolated_raw_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("REACH_RAW_DIR", str(tmp_path / "_raw"))
+    monkeypatch.setenv("OMNIHUB_RAW_DIR", str(tmp_path / "_raw"))
 
 
 class HttpStub:
@@ -47,7 +47,7 @@ class HttpStub:
         for needle, result in self.routes:
             if needle in url:
                 return result
-        raise ReachError(NOT_FOUND, f"unexpected URL: {url}")
+        raise OmniHubError(NOT_FOUND, f"unexpected URL: {url}")
 
 
 def test_github_search_parser_keeps_limit_and_provenance_fields():
@@ -65,7 +65,7 @@ def test_github_search_parser_keeps_limit_and_provenance_fields():
 def test_github_search_parser_reports_api_error_message():
     parser = _load("github", "parse.py")
     raw = RawResult(data={"message": "API rate limit exceeded"})
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.github_repos(raw)
     assert "rate limit" in info.value.message
 
@@ -180,7 +180,7 @@ def test_v2ex_read_accepts_numeric_id_and_rejects_other_targets():
 
 def test_v2ex_missing_topic_is_not_found():
     module = _load("v2ex", "read.py")
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         module.read_topic("999999", ctx=HttpStub([("/topics/show.json", RawResult(data=[]))]))
     assert info.value.code == NOT_FOUND
 
@@ -345,11 +345,11 @@ def test_bilibili_subtitles_prefers_a_manual_track_over_the_ai_track():
 def test_bilibili_subtitles_reports_missing_or_unissued_tracks():
     parser = _load("bilibili", "parse.py")
 
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.subtitles(_bilibili_raw(track_count=0, subtitles=[]), ctx=HttpStub([]))
     assert info.value.code == NOT_FOUND
 
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.subtitles(_bilibili_raw(track_count=1, subtitles=[]), ctx=HttpStub([]))
     assert info.value.code == UPSTREAM_BROKEN
 
@@ -357,7 +357,7 @@ def test_bilibili_subtitles_reports_missing_or_unissued_tracks():
 def test_bilibili_subtitles_surfaces_browser_errors():
     parser = _load("bilibili", "parse.py")
 
-    with pytest.raises(ReachError) as info:
+    with pytest.raises(OmniHubError) as info:
         parser.subtitles(
             RawResult(data={"error": "Bilibili view API -400: bad bvid"}),
             ctx=HttpStub([]),

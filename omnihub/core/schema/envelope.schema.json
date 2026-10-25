@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://omnihub.dev/schema/envelope.schema.json",
+  "title": "omnihub action envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ok",
+    "channel",
+    "action",
+    "backend",
+    "items",
+    "meta",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "ok": {"type": "boolean"},
+    "channel": {"type": ["string", "null"]},
+    "action": {"type": ["string", "null"]},
+    "backend": {"type": ["string", "null"]},
+    "items": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/item"}
+    },
+    "meta": {
+      "type": "object",
+      "required": ["elapsed_ms", "attempts"],
+      "properties": {
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "attempts": {"type": "array"}
+      },
+      "additionalProperties": true
+    },
+    "error": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "hint"],
+          "properties": {
+            "code": {"type": "string"},
+            "message": {"type": "string"},
+            "hint": {"type": "string"}
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url", "author", "published_at", "text", "raw"],
+      "properties": {
+        "title": {"type": ["string", "null"]},
+        "url": {"type": ["string", "null"]},
+        "author": {"type": ["string", "null"]},
+        "published_at": {"type": ["string", "null"]},
+        "text": {"type": ["string", "null"]},
+        "raw": {},
+        "platform": {"type": "string"},
+        "source": {"type": "string"},
+        "priority": {"type": "integer"}
+      }
+    }
+  }
+}
