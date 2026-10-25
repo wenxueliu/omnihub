@@ -832,8 +832,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 ### M4 — 全量迁移与插件
 
-**状态：插件部分已完成（2026-10-25），`python -m pytest -q` 197 项通过**；
-剩余平台迁移仍待进行。
+**状态：插件部分与平台批次二已完成（2026-10-25），`python -m pytest -q`
+202 项通过**；登录类平台迁移仍待进行。
 
 **已完成**
 
@@ -850,12 +850,21 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - `skill [--output FILE]`：从 registry 生成 SKILL.md（命令、平台表、每个
   平台的参数与来源顺序），不包含凭据与来源 `args`。
 
+**平台批次二（2026-10-25）**
+
+- `platforms/reddit/`：Exa `site:reddit.com` 搜索，Exa fetch 读取帖子与
+  高赞评论，daemon 可用时用真实浏览器兜底。实测 Reddit 匿名 JSON 与 Jina
+  都返回 403，因此不引入这两个来源。
+- `platforms/youtube/`：Exa `site:youtube.com` 搜索，Exa fetch 读取视频页
+  正文/字幕文本（实测可拿到完整字幕），daemon 为兜底来源。
+- 两个平台均为纯 manifest；共享 `exa_search` / `exa_read` 解析器。补充
+  `exa_read` 对“`# 标题` + URL/Published/Author”页面头的解析（搜索结果的
+  `Title:` 块格式保持不变）。
+
 **待完成**
 
-- 剩余平台迁成目录包（参考 `reference/Agent-Reach/agent_reach/channels/`：
-  reddit、youtube、twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin、
-  facebook、instagram、boss 等；多数依赖登录或浏览器，需要先确认可用
-  来源）。
+- 其余依赖登录或浏览器的平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
+  linkedin、facebook、instagram、boss）需要先确认可用来源，暂不迁移。
 - 删除静态 registry 与旧 channel 类（本仓库已无旧 channel 类，此条只对
   上游迁移过程有意义）。
 
@@ -866,6 +875,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - 测试覆盖：hooks 缺能力声明被拒、环境变量/参数信任、未信任时拒绝执行、
   `plugin validate` 的 errors/warnings/缺失路径、explain 来源、skill 输出
   不含 secret。
+- 真实网络：Reddit 搜索/读取、YouTube 搜索/读取均返回 `ok:true`；
+  `doctor --text` 中 reddit/youtube 为 `ok`，daemon 为可选适配器。
 
 ### M5 — 加固与发布
 

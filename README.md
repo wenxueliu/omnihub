@@ -37,6 +37,10 @@ python -m agent_reach.cli search "python 限流" --platform v2ex --limit 3
 python -m agent_reach.cli read https://www.v2ex.com/t/1 --text
 python -m agent_reach.cli search "rust 教程" --platform bilibili --limit 3
 python -m agent_reach.cli read https://www.bilibili.com/video/BV1rpWjevEip --text
+python -m agent_reach.cli search "asyncio" --platform reddit --limit 3
+python -m agent_reach.cli read https://www.reddit.com/r/Python/comments/j531n0/an_introduction_to_async_programming_python/ --text
+python -m agent_reach.cli search "asyncio tutorial" --platform youtube --limit 3
+python -m agent_reach.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --text
 
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
 python -m agent_reach.cli doctor --text
@@ -57,15 +61,19 @@ reach-platforms platforms --text
 `web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
-100、`bilibili` 110、`v2ex` 120）通过 `--platform`，或 routing 里自定义
-的 `intents` 使用。`read` 按 URL 域名先选站点平台，再自动把 `web` 作为
-最后一个来源。
+100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140）通过
+`--platform`，或 routing 里自定义的 `intents` 使用。`read` 按 URL 域名先
+选站点平台，再自动把 `web` 作为最后一个来源。
 
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
   `GITHUB_TOKEN` 或 `GH_TOKEN` 可提高限额并访问私有仓库。
 - `v2ex`：SOV2EX 搜索主题，V2EX 公共 API 读取主题和第一页回复。
 - `bilibili`：Exa `site:bilibili.com` 搜索；读取优先 Jina，配置
   `BILIBILI_COOKIE` 后可用视频 API 获取结构化元数据。
+- `reddit`：Exa `site:reddit.com` 搜索；Exa fetch 读取公开帖子与高赞评论，
+  daemon 可用时可用真实浏览器兜底（Reddit 的匿名 JSON 与 Jina 都返回 403）。
+- `youtube`：Exa `site:youtube.com` 搜索；Exa fetch 读取页面正文/字幕文本，
+  daemon 可用时可用真实浏览器兜底。
 
 ## 目录
 
@@ -101,6 +109,8 @@ agent_reach/
   platforms/github/      # GitHub 搜索、仓库/issue/PR 读取
   platforms/v2ex/        # SOV2EX 搜索、主题与回复读取
   platforms/bilibili/    # Exa 搜索、Jina / Cookie API 读取
+  platforms/reddit/      # Exa 搜索与帖子读取、浏览器兜底
+  platforms/youtube/     # Exa 搜索与视频页/字幕读取、浏览器兜底
   utils/                 # URL、文本脱敏、子进程环境（复用 Agent-Reach）
 ```
 

@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "# Best resources for learning asyncio? : r/learnpython\nURL: https://www.reddit.com/r/learnpython/comments/wpjc6d/best_resources_for_learning_asyncio/\nPublished: 2022-08-16\nAuthor: u/RennitheOG\n\n# Best resources for learning asyncio?\n\nPosted by **u/RennitheOG** in r/learnpython · 7 points · 5 comments\n\n## Top comments (1 shown)\n\n**u/kAROBsTUIt** · 2 points\n> The official Python documentation is good."
+      }
+    ]
+  }
+}

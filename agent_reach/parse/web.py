@@ -130,6 +130,32 @@ def _parse_exa_text(text: str) -> list[dict]:
     return items
 
 
+def _parse_exa_page(text: str) -> dict:
+    """Parse a single fetched page (Exa emits a Markdown heading, not ``Title:``)."""
+    lines = (text or "").strip().splitlines()
+    index = 0
+    title: Optional[str] = None
+    if lines and lines[0].startswith("# "):
+        title = lines[0][2:].strip() or None
+        index = 1
+    fields: dict[str, str] = {}
+    while index < len(lines):
+        match = _EXA_HEADER_RE.match(lines[index])
+        if not match:
+            break
+        fields[match.group(1).lower()] = match.group(2).strip()
+        index += 1
+    body = "\n".join(lines[index:]).strip()
+    return make_item(
+        title=title or fields.get("title") or None,
+        url=fields.get("url") or None,
+        author=fields.get("author") or None,
+        published_at=fields.get("published") or None,
+        text=body,
+        raw=fields,
+    )
+
+
 def _parse_jina(target: str, body: str) -> dict:
     title = re.search(r"^Title:\s*(.*)$", body, re.M)
     published = re.search(r"^Published Time:\s*(.*)$", body, re.M)
@@ -173,7 +199,9 @@ def exa_read(raw: Any, *, action: Any = None, ctx: Any = None) -> list[dict]:
         return items[:1]
     if not text.strip():
         raise ReachError(UPSTREAM_BROKEN, "Exa returned no content")
-    return [make_item(url=target, text=text.strip())]
+    item = _parse_exa_page(text)
+    item["url"] = item.get("url") or target
+    return [item]
 
 
 def jina(raw: Any, *, action: Any = None, ctx: Any = None) -> list[dict]:

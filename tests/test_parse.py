@@ -4,6 +4,7 @@ import pytest
 
 from agent_reach.adapters.base import RawResult
 from agent_reach.parse.generic import ParseError, extract_items, loads_json, parse_with_chain
+from agent_reach.parse.web import exa_read
 
 
 def test_loads_json_from_noisy_stdout():
@@ -56,6 +57,36 @@ def test_opencli_error_envelope_is_a_parse_failure():
     raw = RawResult(text="ok: false\nerror:\n  message: not logged in\n")
     with pytest.raises(ParseError, match="OpenCLI error"):
         parse_with_chain(raw, ["opencli"])
+
+
+def test_exa_read_parses_a_markdown_page_header():
+    target = "https://www.youtube.com/watch?v=example1234"
+    raw = RawResult(
+        data={
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "# asyncio in Python - Full Tutorial\n"
+                            "URL: https://www.youtube.com/watch?v=example1234\n"
+                            "Published: 2024-01-15\n"
+                            "Author: TechWithTim\n"
+                            "\n"
+                            "Event loops and coroutines."
+                        ),
+                    }
+                ]
+            }
+        },
+        meta={"params": {"target": target}},
+    )
+    items = exa_read(raw)
+    assert items[0]["title"] == "asyncio in Python - Full Tutorial"
+    assert items[0]["url"] == target
+    assert items[0]["author"] == "TechWithTim"
+    assert items[0]["published_at"] == "2024-01-15"
+    assert items[0]["text"] == "Event loops and coroutines."
 
 
 def test_parse_chain_reports_all_failures():

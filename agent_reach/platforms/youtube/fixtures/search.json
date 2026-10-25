@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Title: asyncio in Python - Full Tutorial\nURL: https://www.youtube.com/watch?v=example1234\nPublished: 2024-01-15T00:00:00.000Z\nAuthor: TechWithTim\nHighlights:\nLearn asyncio from scratch: event loops, tasks and coroutines.\n\n---\n\nTitle: Python Async Programming Tutorial\nURL: https://www.youtube.com/watch?v=example5678\nPublished: 2023-11-02T00:00:00.000Z\nAuthor: ArjanCodes\nHighlights:\nA practical walkthrough of async and await."
+      }
+    ]
+  }
+}

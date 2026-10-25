@@ -66,12 +66,14 @@ def _adapters(http_adapter):
 def test_builtin_catalog_includes_m2_platforms():
     registry = _registry()
     ids = set(registry.platforms)
-    assert {"github", "v2ex", "bilibili", "web"} <= ids
+    assert {"github", "v2ex", "bilibili", "reddit", "youtube", "web"} <= ids
     assert registry.platforms["github"].priority == 100
     assert registry.platforms["bilibili"].priority == 110
     assert registry.platforms["v2ex"].priority == 120
+    assert registry.platforms["reddit"].priority == 130
+    assert registry.platforms["youtube"].priority == 140
     assert registry.platforms["web"].priority == 10
-    for platform_id in ("github", "v2ex", "bilibili"):
+    for platform_id in ("github", "v2ex", "bilibili", "reddit", "youtube"):
         platform = registry.platforms[platform_id]
         assert platform.supports("search")
         assert platform.supports("read")
@@ -241,6 +243,76 @@ def test_doctor_reports_optional_auth_secret_without_leaking_values():
         assert secret in auth["detail"]
         assert rows[platform_id]["status"] == "ok"
     assert "SESSDATA" not in json.dumps(report, ensure_ascii=False)
+
+
+def test_reddit_search_uses_exa_and_keeps_provenance():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("reddit", "search.json")))
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "asyncio", "limit": 2},
+        ctx=FakeCtx(),
+        platform="reddit",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["channel"] == "reddit"
+    assert result["backend"] == "exa"
+    assert len(result["items"]) == 2
+    assert result["items"][0]["platform"] == "reddit"
+    assert result["items"][0]["url"].startswith("https://www.reddit.com/")
+
+
+def test_reddit_read_uses_exa_fetch():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("reddit", "read.json")))
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={
+            "target": "https://www.reddit.com/r/learnpython/comments/wpjc6d/best_resources_for_learning_asyncio/"
+        },
+        ctx=FakeCtx(),
+        platform="reddit",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "exa"
+    assert result["items"][0]["title"].startswith("Best resources")
+    assert "official Python documentation" in result["items"][0]["text"]
+
+
+def test_youtube_read_returns_transcript_text():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("youtube", "read.json")))
+    target = "https://www.youtube.com/watch?v=example1234"
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={"target": target},
+        ctx=FakeCtx(),
+        platform="youtube",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["items"][0]["title"] == "asyncio in Python - Full Tutorial"
+    assert result["items"][0]["url"] == target
+    assert "event loop" in result["items"][0]["text"]
+
+
+def test_read_url_routes_reddit_and_youtube_before_web():
+    registry = _registry()
+    for url, expected in (
+        ("https://www.reddit.com/r/python/comments/abc/x/", "reddit"),
+        ("https://youtu.be/example1234", "youtube"),
+    ):
+        plan = build_plan(registry, DEFAULT_ROUTING, action="read", url=url)
+        assert plan.platform_ids[0] == expected
+        assert plan.platform_ids[-1] == "web"
 
 
 def test_removing_one_platform_directory_leaves_the_others(tmp_path):

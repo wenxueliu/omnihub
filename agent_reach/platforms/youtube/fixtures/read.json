@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "# asyncio in Python - Full Tutorial\nURL: https://www.youtube.com/watch?v=example1234\nPublished: 2024-01-15\nAuthor: TechWithTim\n\nIn this tutorial we build an asyncio event loop from scratch.\n\n[♪♪♪] First, import asyncio and create a coroutine."
+      }
+    ]
+  }
+}

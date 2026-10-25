@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Title: Best resources for learning asyncio? : r/learnpython\nURL: https://www.reddit.com/r/learnpython/comments/wpjc6d/best_resources_for_learning_asyncio/\nPublished: 2022-08-16T03:18:41.000Z\nAuthor: u/RennitheOG\nHighlights:\n# Best resources for learning asyncio?\n\nPosted by **u/RennitheOG** in r/learnpython · 7 points · 5 comments\n\nMost resources I find are one of two things.\n\n---\n\nTitle: Async programming in python. Looking for the best sources to learn it. : r/learnpython\nURL: https://www.reddit.com/r/learnpython/comments/11tapnb/async_programming_in_py/\nPublished: 2023-03-16T12:00:00.000Z\nAuthor: u/example_user\nHighlights:\n# Async programming in python\n\nA thread about event loops and tasks."
+      }
+    ]
+  }
+}
