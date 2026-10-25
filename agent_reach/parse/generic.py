@@ -19,6 +19,15 @@ from typing import Any, Optional, Sequence
 import yaml
 
 from agent_reach.core.result import make_item
+from agent_reach.parse.web import exa_read, exa_search, jina
+
+#: Parsers shared by several platforms. A platform-local ``parse.py`` handler
+#: with the same name takes precedence.
+NAMED_PARSERS = {
+    "exa_search": exa_search,
+    "exa_read": exa_read,
+    "jina": jina,
+}
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _JSON_START = re.compile(r"[\[{]")
@@ -201,6 +210,12 @@ def parse_with_chain(
         if name in custom:
             try:
                 return custom[name](raw, action=action, ctx=ctx)
+            except ParseError as exc:
+                errors.append(f"{entry}: {exc}")
+                continue
+        if name in NAMED_PARSERS:
+            try:
+                return NAMED_PARSERS[name](raw, action=action, ctx=ctx)
             except ParseError as exc:
                 errors.append(f"{entry}: {exc}")
                 continue

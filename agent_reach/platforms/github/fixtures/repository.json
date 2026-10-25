@@ -1,0 +1,15 @@
+{
+  "full_name": "pallets/flask",
+  "html_url": "https://github.com/pallets/flask",
+  "description": "The Python micro framework for building web applications.",
+  "owner": {"login": "pallets"},
+  "created_at": "2010-04-06T11:56:51Z",
+  "language": "Python",
+  "stargazers_count": 69123,
+  "forks_count": 16234,
+  "open_issues_count": 12,
+  "topics": ["flask", "python", "web"],
+  "archived": false,
+  "default_branch": "main",
+  "updated_at": "2026-10-24T08:00:00Z"
+}

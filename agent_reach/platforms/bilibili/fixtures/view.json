@@ -1,0 +1,29 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "bvid": "BV1xx411c7mD",
+    "aid": 170001,
+    "title": "【纪录片】示例视频",
+    "desc": "这是一段用于测试的视频简介。",
+    "pubdate": 1700000000,
+    "duration": 600,
+    "copyright": 1,
+    "owner": {"mid": 2, "name": "示例UP主"},
+    "stat": {
+      "view": 123456,
+      "danmaku": 789,
+      "reply": 456,
+      "favorite": 1234,
+      "coin": 567,
+      "share": 89,
+      "like": 2345
+    },
+    "pages": [
+      {"cid": 1, "page": 1, "part": "第一集", "duration": 300},
+      {"cid": 2, "page": 2, "part": "第二集", "duration": 300}
+    ],
+    "short_link_v2": "https://b23.tv/BV1xx411c7mD"
+  }
+}

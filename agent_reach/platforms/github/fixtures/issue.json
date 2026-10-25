@@ -1,0 +1,11 @@
+{
+  "number": 42,
+  "title": "Clarify application factory docs",
+  "html_url": "https://github.com/pallets/flask/issues/42",
+  "user": {"login": "octocat"},
+  "created_at": "2026-10-20T10:00:00Z",
+  "updated_at": "2026-10-21T09:30:00Z",
+  "state": "open",
+  "labels": [{"name": "docs"}, {"name": "good first issue"}],
+  "body": "The application factory section could show how extensions are initialized."
+}

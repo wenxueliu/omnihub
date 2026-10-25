@@ -45,6 +45,7 @@ def make_platform(tmp_path):
         domains=None,
         actions=None,
         requires=None,
+        auth=None,
         level: str = "default",
         description: str | None = None,
     ) -> Path:
@@ -60,6 +61,8 @@ def make_platform(tmp_path):
         }
         if requires:
             data["requires"] = requires
+        if auth:
+            data["auth"] = auth
         (directory / "platform.yaml").write_text(
             yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
         )

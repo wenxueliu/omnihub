@@ -9,6 +9,7 @@ code (login wall, captcha, rate limit, bad input) stops immediately.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -109,6 +110,17 @@ def prepare_params(
         if choices and value not in choices:
             allowed = ", ".join(repr(choice) for choice in choices)
             raise ReachError(BAD_INPUT, f"parameter {name!r} must be one of {allowed}")
+        if kind in {"int", "float"}:
+            if spec.get("minimum") is not None and value < spec["minimum"]:
+                raise ReachError(
+                    BAD_INPUT,
+                    f"parameter {name!r} must be at least {spec['minimum']}",
+                )
+            if spec.get("maximum") is not None and value > spec["maximum"]:
+                raise ReachError(
+                    BAD_INPUT,
+                    f"parameter {name!r} must be at most {spec['maximum']}",
+                )
         if spec.get("format") == "url":
             value = ensure_public_url(str(value))
         resolved[name] = value
@@ -237,6 +249,7 @@ def _attempt(
     started: float,
     *,
     error: Optional[ReachError] = None,
+    reason: Optional[str] = None,
 ) -> dict:
     entry = {
         "platform": platform.id,
@@ -244,10 +257,36 @@ def _attempt(
         "result": result,
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
+    if reason:
+        entry["reason"] = reason
     if error is not None:
         entry["code"] = error.code
         entry["error"] = error.message
     return entry
+
+
+def _skip_reason(source: Source, ctx: Any) -> Optional[str]:
+    """Evaluate a source ``when`` condition.
+
+    Supported forms: ``secret:NAME`` (environment or secrets file) and
+    ``tool:NAME`` (executable on PATH). An empty condition always runs.
+    """
+    condition = (source.when or "").strip()
+    if not condition:
+        return None
+    kind, _, name = condition.partition(":")
+    kind = kind.strip().lower()
+    name = name.strip()
+    if not name:
+        raise ReachError(NEED_SETUP, f"invalid when condition {condition!r}")
+    if kind == "secret":
+        return None if ctx.secret(name) else f"secret {name!r} is not configured"
+    if kind == "tool":
+        return None if shutil.which(name) else f"tool {name!r} is not installed"
+    raise ReachError(
+        NEED_SETUP,
+        f"unsupported when condition {condition!r} (use secret:NAME or tool:NAME)",
+    )
 
 
 def _try_platform(
@@ -285,6 +324,11 @@ def _try_platform(
     for source in sources:
         started = time.monotonic()
         try:
+            skip = _skip_reason(source, ctx)
+            if skip:
+                last_error = ReachError(NEED_SETUP, skip)
+                attempts.append(_attempt(platform, source, "SKIP", started, reason=skip))
+                continue
             adapter = adapters.get(source.adapter)
             if adapter is None:
                 raise ReachError(

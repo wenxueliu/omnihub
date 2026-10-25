@@ -105,7 +105,9 @@
         "required": {"type": "boolean"},
         "default": {},
         "description": {"type": "string"},
-        "choices": {"type": "array"}
+        "choices": {"type": "array"},
+        "minimum": {"type": "number"},
+        "maximum": {"type": "number"}
       }
     },
     "source": {

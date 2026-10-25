@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from agent_reach import __version__
+from agent_reach.adapters.registry import build_adapters
 from agent_reach.core.config import ConfigError, load_routing
 from agent_reach.core.context import Context
+from agent_reach.core.doctor import build_doctor_report
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.registry import Registry, discover
 from agent_reach.core.result import BAD_INPUT, ReachError, envelope
@@ -79,6 +81,56 @@ def _cmd_platforms(args: argparse.Namespace) -> int:
         }
     _emit(payload, text=args.text, render_text=_platforms_text)
     return 0 if not errors else 2
+
+
+def _doctor_text(payload: dict) -> None:
+    for platform in payload.get("platforms", []):
+        actions = ",".join(platform.get("actions") or [])
+        print(f"{platform['id']:<20} {platform['status']:<9} {actions}")
+        for tool in platform.get("tools") or []:
+            label = "required" if tool.get("required") else "optional"
+            print(f"  tool {tool['name']:<14} {label:<8} {tool.get('detail') or ''}")
+        for adapter in platform.get("adapters") or []:
+            state = "ok" if adapter.get("ok") else "missing"
+            detail = adapter.get("detail") or ""
+            print(f"  adapter {adapter['kind']:<11} {state:<8} {detail}")
+        for secret in platform.get("secrets") or []:
+            print(
+                f"  secret {secret['name']:<12} "
+                f"{'set' if secret.get('ok') else 'missing'}"
+            )
+        auth = platform.get("auth") or {}
+        if auth.get("detail") and auth.get("detail") != "no login required":
+            state = {True: "ok", False: "failed", None: "unknown"}[auth.get("ok")]
+            print(f"  auth {'':<17} {state:<8} {auth.get('detail') or ''}")
+    for error in payload.get("errors", []):
+        print(f"invalid: {error['path']}: {error['message']}", file=sys.stderr)
+    meta = payload.get("meta") or {}
+    print(
+        f"{meta.get('count', 0)} platform(s), {meta.get('error_count', 0)} error(s), "
+        f"{meta.get('degraded_count', 0)} degraded",
+        file=sys.stderr,
+    )
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    registry = _discover(args)
+    try:
+        context = Context()
+    except ReachError as exc:
+        _emit(
+            _error_payload(exc.code, exc.message, hint=exc.hint or ""),
+            text=args.text,
+            render_text=lambda payload: print(payload["error"]["message"], file=sys.stderr),
+        )
+        return 1
+    report = build_doctor_report(
+        registry,
+        ctx=context,
+        adapters=build_adapters(context=context),
+    )
+    _emit(report, text=args.text, render_text=_doctor_text)
+    return 0 if report["ok"] else 1
 
 
 def _plan_text(payload: dict) -> None:
@@ -356,6 +408,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--text", action="store_true", help="Human-readable table instead of JSON."
     )
     platforms.set_defaults(func=_cmd_platforms)
+
+    doctor = subparsers.add_parser(
+        "doctor", help="Check platform manifests, tools, adapters and login hints."
+    )
+    _add_discovery_args(doctor)
+    doctor.add_argument(
+        "--text", action="store_true", help="Human-readable report instead of JSON."
+    )
+    doctor.set_defaults(func=_cmd_doctor)
 
     explain = subparsers.add_parser(
         "explain", help="Show which platforms a request would use."

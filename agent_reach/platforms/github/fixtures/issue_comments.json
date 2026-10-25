@@ -1,0 +1,7 @@
+[
+  {
+    "user": {"login": "maintainer"},
+    "created_at": "2026-10-21T09:30:00Z",
+    "body": "Good point — a short `create_app` example would help. PRs welcome."
+  }
+]

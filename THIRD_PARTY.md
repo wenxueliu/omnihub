@@ -8,7 +8,7 @@ files; this file records provenance so future changes remain reviewable.
 
 - Upstream: `reference/Agent-Reach`
 - License: MIT, Copyright (c) 2025 Agent Eyes
-- Status: copied and adapted in M0; execution and web backends adapted in M1
+- Status: copied and adapted in M0; execution and web backends adapted in M1; GitHub/V2EX/Bilibili platform logic adapted in M2
 
 Copied files:
 
@@ -26,8 +26,16 @@ M1 adaptations:
 |---|---|---|
 | `agent_reach/core/context.py` | `agent_reach/runtime/run.py` | subprocess logic moved behind `Context.run`; bounded stdout/stderr readers; process-group timeout kill; argv-only (no shell); added HTTP client with redirect re-validation, secret lookup and output caps |
 | `agent_reach/adapters/opencli.py` | `agent_reach/backends/opencli.py` | kept YAML `ok: false` error-block detection and status mapping; invocation rebuilt as explicit argv with `-f json`; no shell |
-| `agent_reach/platforms/web/parse.py` | `agent_reach/channels/web.py` | Exa JSON-RPC/SSE payload extraction, Jina Reader header/content parsing and anti-bot detection; reorganized as platform-local parser hooks |
+| `agent_reach/parse/web.py` | `agent_reach/channels/web.py` | Exa JSON-RPC/SSE payload extraction, Jina Reader header/content parsing and anti-bot detection; moved from the web platform to a shared parser module |
 | `agent_reach/adapters/cli.py` | `agent_reach/runtime/run.py` | command construction separated from execution; mapping helpers only |
+
+M2 adaptations:
+
+| Target | Source | Changes |
+|---|---|---|
+| `agent_reach/platforms/github/parse.py`, `read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
+| `agent_reach/platforms/v2ex/parse.py`, `read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
+| `agent_reach/platforms/bilibili/read.py` | `agent_reach/channels/bilibili.py` | kept the BV regex, `/x/web-interface/view?bvid=`, API code mapping and item fields. Cookie comes from `BILIBILI_COOKIE` through `ctx.secret` instead of the `bili-cli` credential store; the source only runs when configured, with Jina/Exa as public fallbacks instead of `bili-cli` / OpenCLI |
 
 No upstream copyright notices were removed.
 

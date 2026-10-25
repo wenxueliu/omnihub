@@ -631,6 +631,18 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 | `platforms/web` | Agent-Reach `channels/web.py`（Exa search、Jina/Exa read） | 拆成 manifest sources + `parse.py`；保留 antibot 检测与错误映射 |
 | `platforms/noop` Python hooks | 新实现 | 离线端到端测试 |
 
+### 已落地（M2）
+
+| 目标 | 来源 | 处理 |
+|---|---|---|
+| `platforms/github` | Agent-Reach `channels/github.py` | REST 搜索与仓库/README/issue/PR 读取；去掉 `gh` 依赖，token 只经 `ctx.secret` |
+| `platforms/v2ex` | Agent-Reach `channels/v2ex.py` | 保留 topic/replies API 与字段映射；新增 SOV2EX 搜索 |
+| `platforms/bilibili` | Agent-Reach `channels/bilibili.py` | 保留 BV 解析、view API、错误码映射；Cookie 化并用 Jina/Exa 兜底 |
+| `core/doctor.py` | 新实现 | 工具、适配器、必需/可选凭据、builtin auth.status；不联网、不泄露值 |
+| `core/pipeline.py` source `when` | 新实现 | `secret:NAME` / `tool:NAME`；不满足记为 `SKIP` |
+| `core/template.py` 过滤器 | 新实现 | `urlencode` / `lower` / `upper` / `strip`；查询值安全入 URL |
+| `agent_reach/parse/web.py` | M1 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
+
 ### M2 复用候选
 
 | 目标 | 来源 | 必要改造 |
@@ -728,17 +740,43 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 
 ### M2 — 平台批次一
 
+**状态：已完成（2026-10-25）**。`python -m pytest -q` 161 项通过；
+`github`、`v2ex`、`bilibili` 的 `search/read` 已用真实网络验收，`doctor`
+可报告适配器、可选凭据与登录提示。
+
 **交付物**
 
 - `platforms/github/`、`v2ex/`、`bilibili/`
 - 每个平台：`platform.yaml` + fixtures + 解析测试 + 契约测试
 - 登录态/公共网页兜底验证
+- `doctor` 支持 `auth.secret`（可选凭据）且不泄露值
 
-**验收**
+| 平台 | search | read | 可选登录 |
+|---|---|---|---|
+| `github` (100) | `GET /search/repositories`（token / 匿名两个来源） | `read.py`：仓库 + README、issue/PR + 前 50 条评论 | `GITHUB_TOKEN` / `GH_TOKEN` |
+| `v2ex` (120) | SOV2EX `/api/search`；失败回退 Exa `site:v2ex.com` | `read.py`：`topics/show.json` + `replies/show.json` | 无 |
+| `bilibili` (110) | Exa `site:bilibili.com` | `read.py`（需 Cookie）→ Jina → Exa | `BILIBILI_COOKIE` |
 
-- 三个平台的 `search/read` 与旧 channel 结果结构一致。
-- 删除任一平台目录，其他平台不受影响。
-- `agent-reach doctor` 能报告工具与登录态。
+路由默认值调整为 `web: 10`、`github: 100`、`bilibili: 110`、`v2ex: 120`：
+普通搜索走公共网页，站点平台通过 `--platform` 或用户配置的 intent 使用；
+`read` 仍按 URL 域名优先选站点平台，并把 `web` 作为最后兜底。
+
+**验收结果**
+
+- `search flask --platform github --limit 2` 返回 `pallets/flask`、
+  `miguelgrinberg/flasky`，`backend: github-api`；配置 token 后来源变为
+  `github-token`，响应与 attempts 中不出现 token。
+- `read https://github.com/pallets/flask` 返回仓库描述 + README；
+  `read https://github.com/pallets/flask/issues/42` 返回 issue 与评论。
+- `search "python 限流" --platform v2ex` 返回 SOV2EX 命中；
+  `read https://www.v2ex.com/t/1` 返回主题正文与回复。
+- `search "python 教程" --platform bilibili` 返回 Exa 站点结果；
+  未配置 Cookie 时 `read` 跳过 API、走 Jina，attempts 记录 `SKIP`；
+  配置 `BILIBILI_COOKIE` 后走视频 API 并返回结构化统计。
+- `tests/test_platform_contracts.py` 覆盖优先级、域名路由、可选来源
+  跳过/启用、凭据不泄露、doctor 与删除平台目录的隔离性。
+- `Bilibili` 匿名 API 仍受 412 风控；公共读取依赖 Jina 渲染，配置 Cookie
+  才能获得稳定、结构化的视频元数据。
 
 ### M3 — 有状态工具与按需抓取
 

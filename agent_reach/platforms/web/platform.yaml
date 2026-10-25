@@ -2,7 +2,7 @@ id: web
 description: Public-web fallback — Exa hosted search, Jina Reader and Exa page fetch.
 version: 1
 level: default
-priority: 900
+priority: 10
 domains: []
 public_web: true
 

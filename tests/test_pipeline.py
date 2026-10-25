@@ -38,8 +38,11 @@ class FakeAdapter:
 class FakeCtx:
     timeout = 30
 
+    def __init__(self, secrets=None):
+        self.secrets = dict(secrets or {})
+
     def secret(self, name):
-        return None
+        return self.secrets.get(name)
 
 
 def _search_action(sources):
@@ -58,13 +61,16 @@ def _read_action(sources, *, url_format=False):
     return {"read": {"params": {"target": target}, "sources": sources}}
 
 
-def _source(call, priority=10, parse="json_items"):
-    return {
+def _source(call, priority=10, parse="json_items", when=None):
+    source = {
         "adapter": "builtin",
         "call": call,
         "parse": parse,
         "priority": priority,
     }
+    if when:
+        source["when"] = when
+    return source
 
 
 def _routing(mode="first_success", top=None):
@@ -332,6 +338,48 @@ def test_url_format_parameter_rejects_private_target(make_platform, tmp_path):
     assert result["meta"]["attempts"] == []
 
 
+def test_parameter_range_is_enforced(make_platform, tmp_path):
+    routing = _routing()
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "actions": {
+                    "search": {
+                        "params": {
+                            "query": {"type": "str", "required": True},
+                            "limit": {"type": "int", "default": 5, "minimum": 1, "maximum": 3},
+                        },
+                        "sources": [_source("ok")],
+                    }
+                }
+            }
+        },
+    )
+    adapter = FakeAdapter({"ok": [{"title": "A"}]})
+    for value in (0, 4):
+        result = run_action(
+            registry,
+            routing,
+            action="search",
+            params={"query": "x", "limit": value},
+            ctx=FakeCtx(),
+            adapters={"builtin": adapter},
+        )
+        assert result["ok"] is False
+        assert result["error"]["code"] == BAD_INPUT
+    result = run_action(
+        registry,
+        routing,
+        action="search",
+        params={"query": "x", "limit": 3},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+
+
 def test_unknown_platform_is_bad_input(make_platform, tmp_path):
     registry = _registry(
         make_platform,
@@ -424,6 +472,116 @@ def test_aggregate_honours_per_platform_limit(make_platform, tmp_path):
     )
     assert [item["title"] for item in result["items"]] == ["A1", "B1"]
     assert result["meta"]["per_platform_limit"] == 1
+
+
+def test_source_when_secret_skips_without_secret(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "priority": 10,
+                "actions": _search_action(
+                    [_source("token", when="secret:DEMO_TOKEN")]
+                ),
+            },
+            "b": {
+                "priority": 20,
+                "actions": _search_action([_source("b_ok")]),
+            },
+        },
+    )
+    adapter = FakeAdapter({"token": [{"title": "T"}], "b_ok": [{"title": "B"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+    assert result["channel"] == "b"
+    assert adapter.calls == ["b_ok"]
+    assert result["meta"]["attempts"][0]["result"] == "SKIP"
+    assert "DEMO_TOKEN" in result["meta"]["attempts"][0]["reason"]
+
+
+def test_source_when_secret_runs_with_secret(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "actions": _search_action(
+                    [_source("token", when="secret:DEMO_TOKEN")]
+                )
+            }
+        },
+    )
+    adapter = FakeAdapter({"token": [{"title": "T"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx({"DEMO_TOKEN": "value"}),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+    assert adapter.calls == ["token"]
+
+
+def test_source_when_tool_skips_missing_executable(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "actions": _search_action(
+                    [_source("cli", when="tool:definitely-not-a-real-tool-xyz")]
+                )
+            }
+        },
+    )
+    adapter = FakeAdapter({"cli": [{"title": "T"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is False
+    assert adapter.calls == []
+    assert result["meta"]["attempts"][0]["result"] == "SKIP"
+
+
+def test_source_when_rejects_unknown_condition(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "actions": _search_action(
+                    [_source("bad", when="moon:phase"), _source("ok", priority=20)]
+                )
+            }
+        },
+    )
+    adapter = FakeAdapter({"bad": [{"title": "bad"}], "ok": [{"title": "ok"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+    assert adapter.calls == ["ok"]
+    assert result["meta"]["attempts"][0]["code"] == "NEED_SETUP"
 
 
 def test_aggregate_can_disable_dedupe(make_platform, tmp_path):

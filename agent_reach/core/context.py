@@ -303,6 +303,11 @@ class Context:
                     raise ReachError(NOT_FOUND, f"HTTP 404: {snippet or 'not found'}")
                 if status == 429:
                     raise ReachError(RATE_LIMITED, "HTTP 429")
+                if status == 403 and (
+                    response.headers.get("X-RateLimit-Remaining") == "0"
+                    or response.headers.get("Retry-After")
+                ):
+                    raise ReachError(RATE_LIMITED, "HTTP 403: rate limit")
                 # Transport-level 401/403 are retryable with another source.
                 # Login walls and captchas are recognized by tool adapters.
                 raise ReachError(UPSTREAM_BROKEN, f"HTTP {status}: {snippet or 'upstream error'}")

@@ -1,8 +1,10 @@
-"""Exa MCP and Jina Reader parsers.
+"""Shared Exa MCP and Jina Reader parsers.
 
 Exa's hosted MCP replies with JSON-RPC, often as Server-Sent Events. Jina
 returns a small header block followed by ``Markdown Content:``. Both are
-normalized to plain item dicts here; the pipeline attaches provenance.
+normalized to plain item dicts here; the pipeline attaches provenance. Any
+platform may name these handlers in ``parse:`` (``exa_search``, ``exa_read``,
+``jina``); a platform-local ``parse.py`` with the same name still wins.
 """
 
 from __future__ import annotations

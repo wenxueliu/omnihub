@@ -9,6 +9,7 @@ from agent_reach.core.context import CommandFailed, Context
 from agent_reach.core.result import (
     BAD_INPUT,
     NEED_SETUP,
+    RATE_LIMITED,
     TIMEOUT,
     UPSTREAM_BROKEN,
     ReachError,
@@ -138,3 +139,15 @@ def test_http_403_is_retryable(monkeypatch):
     with pytest.raises(ReachError) as info:
         Context().http("https://example.com/a")
     assert info.value.code == UPSTREAM_BROKEN
+
+
+def test_http_403_with_rate_limit_headers_is_final(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.core.context.requests.request",
+        lambda *args, **kwargs: FakeResponse(
+            403, headers={"X-RateLimit-Remaining": "0"}, body=b"API rate limit exceeded"
+        ),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/a")
+    assert info.value.code == RATE_LIMITED

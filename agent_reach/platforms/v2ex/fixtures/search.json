@@ -1,0 +1,34 @@
+{
+  "took": 12,
+  "total": 2,
+  "timed_out": false,
+  "hits": [
+    {
+      "_id": "1251611",
+      "_source": {
+        "id": 1251611,
+        "node": 43,
+        "replies": 4,
+        "created": "2026-10-25T03:04:50",
+        "member": "biteaglelabs",
+        "title": "[全职 / AI 公司] AI 应用开发工程师",
+        "content": "做成本与稳定性治理：Prompt 缓存、按任务分级选型、超时重试、幂等、限流等，把账单和延迟压在合理范围。"
+      },
+      "highlight": {
+        "content": ["做成本与稳定性治理：<em>Prompt</em> 缓存、按任务分级选型、超时重试、幂等、限流等"]
+      }
+    },
+    {
+      "_id": "1251000",
+      "_source": {
+        "id": 1251000,
+        "node": 90,
+        "replies": 12,
+        "created": "2026-10-24T14:00:00",
+        "member": "example",
+        "title": "Python 异步爬虫的限流实践",
+        "content": "分享一个基于 asyncio 的限流实现。"
+      }
+    }
+  ]
+}
