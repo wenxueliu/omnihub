@@ -7,12 +7,16 @@ enforceable in shared code rather than in platform YAML.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
+import math
 import os
 import shutil
 import signal
 import subprocess
 import threading
+import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urljoin, urlsplit
@@ -89,6 +93,26 @@ def _read_limited(pipe: Any, limit: int) -> tuple[bytes, bool]:
         if total >= limit:
             truncated = True
     return b"".join(chunks), truncated
+
+
+def _retry_after_seconds(value: Optional[str]) -> Optional[float]:
+    """Parse ``Retry-After`` as delta-seconds or an HTTP date."""
+    if not value:
+        return None
+    text = value.strip()
+    try:
+        seconds = float(text)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_dt.timezone.utc)
+        seconds = when.timestamp() - time.time()
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
 
 
 def _command_error_code(stderr: str) -> str:
@@ -303,12 +327,24 @@ class Context:
                 if status == 404:
                     raise ReachError(NOT_FOUND, f"HTTP 404: {snippet or 'not found'}")
                 if status == 429:
-                    raise ReachError(RATE_LIMITED, "HTTP 429")
+                    raise ReachError(
+                        RATE_LIMITED,
+                        "HTTP 429",
+                        retry_after_seconds=_retry_after_seconds(
+                            response.headers.get("Retry-After")
+                        ),
+                    )
                 if status == 403 and (
                     response.headers.get("X-RateLimit-Remaining") == "0"
                     or response.headers.get("Retry-After")
                 ):
-                    raise ReachError(RATE_LIMITED, "HTTP 403: rate limit")
+                    raise ReachError(
+                        RATE_LIMITED,
+                        "HTTP 403: rate limit",
+                        retry_after_seconds=_retry_after_seconds(
+                            response.headers.get("Retry-After")
+                        ),
+                    )
                 # Transport-level 401/403 are retryable with another source.
                 # Login walls and captchas are recognized by tool adapters.
                 raise ReachError(UPSTREAM_BROKEN, f"HTTP {status}: {snippet or 'upstream error'}")

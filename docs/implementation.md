@@ -579,7 +579,7 @@ requires:
 - **URL**：所有请求走 `normalize_public_http_url`；重定向后复检；阻止私有 IP、userinfo、非 http(s)。
 - **输出上限**：`http_request` 已有 8 MiB；`run_cmd` 需要补 `max_output_bytes`（当前无上限）。
 - **凭据**：`ctx.secret(key)`；日志与错误消息脱敏；不把 Cookie/Token 放进 `raw`。
-- **限流**：沿用 channel 级 cooldown、backend 级 pause；平台 manifest 可声明最小间隔。
+- **限流**：平台级 cooldown（`RATE_LIMITED` / `PLATFORM_BLOCKED`）+ 来源级 pause（`TIMEOUT` / `UPSTREAM_BROKEN` / `NEED_SETUP`），状态跨进程持久化；来源可声明 `min_interval`，核心限制上限。
 - **daemon**：只允许 loopback；校验地址来自本地配置文件；不对外暴露。
 - **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust-plugin <id>`（或 `REACH_TRUSTED_PLUGINS`），并声明所需能力（`http` / `exec` / `browser`）。
 
@@ -656,7 +656,7 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 
 | 目标 | 来源 | 必要改造 |
 |---|---|---|
-| `core/policy.py` 限流 | union-search `channels/no_api/request_state.py` | 存储路径注入；429/captcha cooldown 映射 `RATE_LIMITED` / `PLATFORM_BLOCKED` |
+| `core/ratelimit.py` | union-search `channels/no_api/request_state.py` + Agent-Reach `runtime/state.py` | 只借语义（平台冷却 / 来源暂停 / pacing），改为 JSON 账本、路径注入、0600/0700 原子写、fail open；429/captcha 映射 `RATE_LIMITED` / `PLATFORM_BLOCKED` |
 | no-API 平台族 | union-search `channels/no_api/**` | 每个平台一个目录 + fixtures；去掉 import 时 `.env` |
 | URL→Markdown | union-search `url_to_markdown/engines/*` | 懒加载可选依赖；Defuddle/Node 失败时降级 Jina |
 | HTML/regex 通用解析 | union-search 各平台解析器 | 优先放进平台 `parse.py`；通用链只保留无依赖的 regex |
@@ -899,6 +899,28 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   v2ex `sov2ex`/`v2ex-api`，bilibili `exa`/`jina`，reddit 与 youtube
   均为 `exa`。
 
+**M5 统一限流与冷却（2026-10-25）**
+
+- `core/ratelimit.py`：跨进程账本 `~/.agent-reach/state/rate_limits.json`
+  （`REACH_STATE_DIR` 可改路径；目录 0700、文件 0600，原子替换，POSIX 下
+  `flock` 串行化读改写）。只记录平台/来源名、错误码与时间戳，不记录输入、
+  URL 或凭据；损坏或不可写时 fail open。
+- 两级暂停：`RATE_LIMITED` / `PLATFORM_BLOCKED` 冷却整个平台（默认 300s /
+  900s，优先采用 `Retry-After`，上限 6h）；`TIMEOUT` / `UPSTREAM_BROKEN` /
+  `NEED_SETUP` 只暂停单个来源（60 / 120 / 60s）。来源暂停不阻止平台回退，
+  平台冷却与终止码一致。
+- pipeline 在调用适配器前检查暂停：命中时写 `result: SKIP` 的 attempt，
+  带 `reason` 与 `retry_after_seconds`，不发起网络/进程调用；成功调用清除
+  该来源暂停。最终错误的 `error.retry_after_seconds` 暴露剩余秒数
+  （`ReachError` 新增可选字段，`envelope` 仅在存在时输出，schema_version
+  仍为 1）。
+- `Context` 的 HTTP 429/403 解析 `Retry-After`（秒数或 HTTP 日期）。
+- source 可声明 `min_interval`（秒），核心 `clamp_min_interval` 限制在 10s
+  以内；重复调用同一来源时只等待剩余间隔。
+- **验收结果**：`python -m pytest -q` 235 项通过；覆盖默认/自定义冷却、
+  短冷却不缩短旧冷却、来源暂停隔离、平台回退、pacing、损坏文件、0600/0700
+  权限与 symlink 拒写。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -925,6 +947,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 解析器 | fixture 输入 → 期望 Item；每个来源至少一个样本 |
 | 适配器 | fake 命令 / 本地 HTTP server；超时、非零退出、超大输出、YAML 错误 |
 | 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
+| 限流 | 注入时钟/路径；冷却合并、来源隔离、平台回退、pacing、损坏文件与权限 |
 | 删除 | 删除平台目录后 registry 仍可加载 |
 | live | 显式开启；`agent-reach check --platform <id>`（`--dry-run` 离线列出计划） |
 
@@ -980,11 +1003,10 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 ## 18. 下一步
 
-M0（契约层）与 M1（适配器、管道、`web` 平台、CLI `search`/`read`）均已完成。
-M2 按平台批次迁移真实能力，避免大爆炸式重写：
+M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却也已完成。剩余：
 
-- `github`、`v2ex`、`bilibili` 平台目录与 manifest 测试
-- 限流、冷却与 `RATE_LIMITED` 的统一策略
-- daemon 适配器（kimi-webbridge，仅 loopback）
-- `--enrich N` 搜索后按需补正文
-- 第三方插件信任模型与安全加固
+- 文档迁移指南与发布验收。
+- 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
+  linkedin、facebook、instagram、boss）先确认可用来源，再按平台目录迁移。
+- 适配器测试补齐 fake binary / 本地 fake HTTP server 的边界用例。
+- 已声明但未实现的 `mcp` / `browser` 适配器。

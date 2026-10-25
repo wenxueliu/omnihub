@@ -5,10 +5,13 @@ import pytest
 from agent_reach.adapters.base import Health, RawResult
 from agent_reach.core.pipeline import run_action
 from agent_reach.core.registry import discover
+from agent_reach.core.ratelimit import RateLimits
 from agent_reach.core.result import (
     BAD_INPUT,
     NEED_LOGIN,
+    RATE_LIMITED,
     TIMEOUT,
+    UPSTREAM_BROKEN,
     ReachError,
 )
 
@@ -652,3 +655,172 @@ def test_aggregate_can_disable_dedupe(make_platform, tmp_path):
     )
     assert [item["title"] for item in result["items"]] == ["A", "B"]
     assert result["meta"]["dedupe"] is False
+
+
+class FakeClock:
+    def __init__(self, value: float = 1000.0) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
+def test_rate_limit_cools_the_platform_and_stops_fallback(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {"a": {"priority": 10, "actions": _search_action([_source("limited")])}},
+    )
+    adapter = FakeAdapter(
+        {"limited": ReachError(RATE_LIMITED, "HTTP 429", retry_after_seconds=30)}
+    )
+    first = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert first["ok"] is False
+    assert first["error"]["code"] == RATE_LIMITED
+    assert first["error"]["retry_after_seconds"] == 30
+    assert adapter.calls == ["limited"]
+
+    second = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert second["error"]["code"] == RATE_LIMITED
+    assert 29 < second["error"]["retry_after_seconds"] <= 30
+    assert adapter.calls == ["limited"]
+    attempt = second["meta"]["attempts"][0]
+    assert attempt["result"] == "SKIP"
+    assert "platform cooldown" in attempt["reason"]
+    assert 29 < attempt["retry_after_seconds"] <= 30
+
+
+def test_backend_pause_keeps_other_sources_available(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {
+                "priority": 10,
+                "actions": _search_action(
+                    [_source("broken", priority=10), _source("ok", priority=20)]
+                ),
+            }
+        },
+    )
+    adapter = FakeAdapter(
+        {
+            "broken": ReachError(UPSTREAM_BROKEN, "boom"),
+            "ok": [{"title": "A"}],
+        }
+    )
+    first = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert first["ok"] is True
+    assert first["backend"] == "ok"
+
+    second = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert second["ok"] is True
+    assert adapter.calls == ["broken", "ok", "ok"]
+    assert [attempt["result"] for attempt in second["meta"]["attempts"]] == [
+        "SKIP",
+        "OK",
+    ]
+    assert 119 < second["meta"]["attempts"][0]["retry_after_seconds"] <= 120
+
+
+def test_backend_pause_does_not_stop_platform_fallback(make_platform, tmp_path):
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {
+            "a": {"priority": 10, "actions": _search_action([_source("a_timeout")])},
+            "b": {"priority": 20, "actions": _search_action([_source("b_ok")])},
+        },
+    )
+    adapter = FakeAdapter(
+        {"a_timeout": ReachError(TIMEOUT, "slow"), "b_ok": [{"title": "B"}]}
+    )
+    first = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert first["ok"] is True
+    assert first["channel"] == "b"
+    assert adapter.calls == ["a_timeout", "b_ok"]
+
+    second = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert second["ok"] is True
+    assert second["channel"] == "b"
+    assert adapter.calls == ["a_timeout", "b_ok", "b_ok"]
+    assert second["meta"]["attempts"][0]["result"] == "SKIP"
+    assert 59 < second["meta"]["attempts"][0]["retry_after_seconds"] <= 60
+
+
+def test_min_interval_paces_repeat_calls(make_platform, tmp_path):
+    source = _source("ok")
+    source["min_interval"] = 2
+    registry = _registry(
+        make_platform,
+        tmp_path,
+        {"a": {"priority": 10, "actions": _search_action([source])}},
+    )
+    adapter = FakeAdapter({"ok": [{"title": "A"}]})
+    clock = FakeClock()
+    sleeps: list[float] = []
+    limiter = RateLimits(
+        tmp_path / "state" / "rate_limits.json", now=clock, sleep=sleeps.append
+    )
+
+    def run():
+        return run_action(
+            registry,
+            _routing(),
+            action="search",
+            params={"query": "x"},
+            ctx=FakeCtx(),
+            adapters={"builtin": adapter},
+            rate_limits=limiter,
+        )
+
+    assert run()["ok"] is True
+    assert sleeps == []
+    clock.advance(0.5)
+    assert run()["ok"] is True
+    assert sleeps == [1.5]

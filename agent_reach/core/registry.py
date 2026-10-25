@@ -65,6 +65,7 @@ class Source:
     disabled: bool = False
     timeout: Optional[float] = None
     max_bytes: Optional[int] = None
+    min_interval: Optional[float] = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -174,6 +175,9 @@ def _parse_source(data: Mapping[str, Any]) -> Source:
         disabled=bool(data.get("disabled", False)),
         timeout=float(data["timeout"]) if data.get("timeout") is not None else None,
         max_bytes=int(data["max_bytes"]) if data.get("max_bytes") is not None else None,
+        min_interval=(
+            float(data["min_interval"]) if data.get("min_interval") is not None else None
+        ),
         raw=dict(data),
     )
 

@@ -165,7 +165,8 @@
         "when": {"type": "string", "minLength": 1},
         "disabled": {"type": "boolean"},
         "timeout": {"type": "number", "exclusiveMinimum": 0},
-        "max_bytes": {"type": "integer", "minimum": 1}
+        "max_bytes": {"type": "integer", "minimum": 1},
+        "min_interval": {"type": "number", "minimum": 0}
       }
     },
     "action": {

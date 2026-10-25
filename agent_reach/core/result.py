@@ -53,11 +53,19 @@ _MAX_MESSAGE_CHARS = 500
 class ReachError(Exception):
     """A failure with a unified code; upstream messages and hints are passed through unchanged."""
 
-    def __init__(self, code: str, message: str, hint: Optional[str] = None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        hint: Optional[str] = None,
+        *,
+        retry_after_seconds: Optional[float] = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.hint = hint
+        self.retry_after_seconds = retry_after_seconds
 
 
 def _clean(text: object) -> str:
@@ -149,6 +157,17 @@ def envelope(
     merged_meta = {"elapsed_ms": elapsed_ms, "attempts": list(attempts or [])}
     if meta:
         merged_meta.update(meta)
+    error_payload = None
+    if error is not None:
+        error_payload = {
+            "code": error.code,
+            "message": error.message,
+            "hint": error.hint or DEFAULT_HINTS.get(error.code, ""),
+        }
+        if error.retry_after_seconds is not None:
+            error_payload["retry_after_seconds"] = round(
+                float(error.retry_after_seconds), 1
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "ok": error is None,
@@ -157,11 +176,5 @@ def envelope(
         "backend": backend if error is None else None,
         "items": list(items or []) if error is None else [],
         "meta": merged_meta,
-        "error": None
-        if error is None
-        else {
-            "code": error.code,
-            "message": error.message,
-            "hint": error.hint or DEFAULT_HINTS.get(error.code, ""),
-        },
+        "error": error_payload,
     }

@@ -7,9 +7,9 @@
 M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
 （kimi-webbridge `daemon` 适配器、`search --enrich N`）+ M4 插件校验与
 信任、`explain` 来源明细、`SKILL.md` 生成、平台批次二（`reddit`、
-`youtube`）+ M5 平台自声明的 `check` live 回归。CLI 已支持 `platforms`、
-`doctor`、`explain`、`plugin`、`skill`、`check`、`search` 和 `read`。
-剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
+`youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却。CLI 已支持
+`platforms`、`doctor`、`explain`、`plugin`、`skill`、`check`、`search` 和
+`read`。剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
 
 ## 快速开始
 
@@ -176,6 +176,36 @@ python -m agent_reach.cli search "query" --trust-plugin my-plugin
 `plugin validate` 会给出提醒。`explain` 会列出每个平台的来源顺序、
 `adapter`、`when` 与 `parse`，`skill` 从 registry 生成文档，两者都不会
 输出凭据或来源 `args`。
+
+### 限流与冷却
+
+失败会写入跨进程的冷却账本，下一次请求在真正发出网络/命令调用前就会跳过：
+
+| 错误码 | 范围 | 默认时长 |
+|---|---|---|
+| `RATE_LIMITED` | 整个平台（所有来源与动作） | 300s，优先使用 `Retry-After`，上限 6h |
+| `PLATFORM_BLOCKED` | 整个平台 | 900s |
+| `TIMEOUT` / `UPSTREAM_BROKEN` / `NEED_SETUP` | 单个来源 | 60s / 120s / 60s |
+
+`PLATFORM_BLOCKED` 表示验证码或风控，`RATE_LIMITED` 是终止码：不会切到
+下一个平台。单来源暂停只跳过该来源，同平台其他来源和其他平台仍可继续。
+被跳过的尝试在 `meta.attempts[]` 里带 `result: SKIP`、`reason` 和
+`retry_after_seconds`；最终错误也会在 `error.retry_after_seconds` 中给出
+剩余秒数。成功调用会清除该来源的暂停；平台冷却只会自然过期。
+
+账本位于 `~/.agent-reach/state/rate_limits.json`（目录 0700、文件 0600），
+可用 `REACH_STATE_DIR` 改写位置。文件只保存平台/来源名与时间戳，不保存
+查询、URL 或凭据；损坏或不可写时直接忽略，不会阻塞请求。
+
+平台可在来源上声明 `min_interval`（秒），用于连续调用同一来源时的最小
+间隔；核心把它限制在 10s 以内，超出的部分只会等待，不会报错：
+
+```yaml
+sources:
+  - adapter: http
+    name: exa
+    min_interval: 1.5
+```
 
 ## 路由配置
 

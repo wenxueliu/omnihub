@@ -19,7 +19,8 @@ from typing import Any, Mapping, Optional
 from agent_reach.adapters.base import RawResult, ToolCall
 from agent_reach.adapters.registry import build_adapters
 from agent_reach.core.normalize import dedupe_items, normalize_items
-from agent_reach.core.policy import ensure_public_url
+from agent_reach.core.policy import clamp_min_interval, ensure_public_url
+from agent_reach.core.ratelimit import RateLimits
 from agent_reach.core.result import (
     BAD_INPUT,
     FINAL_CODES,
@@ -251,6 +252,7 @@ def _attempt(
     *,
     error: Optional[ReachError] = None,
     reason: Optional[str] = None,
+    retry_after: Optional[float] = None,
 ) -> dict:
     entry = {
         "platform": platform.id,
@@ -263,6 +265,8 @@ def _attempt(
     if error is not None:
         entry["code"] = error.code
         entry["error"] = error.message
+    if retry_after is not None:
+        entry["retry_after_seconds"] = round(float(retry_after), 1)
     return entry
 
 
@@ -310,7 +314,9 @@ def _try_platform(
     *,
     ctx: Any,
     adapters: Mapping[str, Any],
+    limiter: Optional[RateLimits] = None,
 ) -> PlatformOutcome:
+    limiter = limiter or RateLimits()
     action: Optional[Action] = platform.actions.get(action_name)
     if action is None:
         return PlatformOutcome(
@@ -333,16 +339,65 @@ def _try_platform(
             error=ReachError(NEED_SETUP, f"platform {platform.id!r} has no enabled sources"),
         )
 
+    cooling = limiter.blocked(platform.id)
+    if cooling is not None:
+        wait, code, _scope = cooling
+        return PlatformOutcome(
+            platform_id=platform.id,
+            attempts=[
+                {
+                    "platform": platform.id,
+                    "backend": None,
+                    "result": "SKIP",
+                    "elapsed_ms": 0,
+                    "reason": f"platform cooldown ({code})",
+                    "retry_after_seconds": round(wait, 1),
+                }
+            ],
+            error=ReachError(
+                code,
+                f"platform {platform.id!r} is cooling down for {wait:.0f}s",
+                retry_after_seconds=wait,
+            ),
+            final=True,
+        )
+
     attempts: list[dict] = []
     last_error: Optional[ReachError] = None
+    paused_error: Optional[ReachError] = None
     for source in sources:
         started = time.monotonic()
+        label = source_label(source)
         try:
             skip = _skip_reason(source, ctx, adapters)
             if skip:
                 last_error = ReachError(NEED_SETUP, skip)
                 attempts.append(_attempt(platform, source, "SKIP", started, reason=skip))
                 continue
+            cooling = limiter.blocked(platform.id, label)
+            if cooling is not None:
+                wait, code, scope = cooling
+                paused_error = ReachError(
+                    code,
+                    f"{label} is cooling down for {wait:.0f}s",
+                    retry_after_seconds=wait,
+                )
+                attempts.append(
+                    _attempt(
+                        platform,
+                        source,
+                        "SKIP",
+                        started,
+                        reason=f"{scope} cooldown ({code})",
+                        retry_after=wait,
+                    )
+                )
+                continue
+            limiter.begin(
+                platform.id,
+                label,
+                min_interval=clamp_min_interval(source.min_interval),
+            )
             adapter = adapters.get(source.adapter)
             if adapter is None:
                 raise ReachError(
@@ -353,26 +408,30 @@ def _try_platform(
             if not health.ok:
                 raise ReachError(
                     NEED_SETUP,
-                    health.detail or f"{source_label(source)} is not available",
+                    health.detail or f"{label} is not available",
                 )
             call = _build_call(source, platform, action_name, prepared, ctx)
             raw = adapter.invoke(call, ctx=ctx)
             items = _parse_source(raw, source, platform, action_name, prepared, ctx)
             if not items:
                 last_error = ReachError(
-                    UPSTREAM_BROKEN, f"{source_label(source)} returned no results"
+                    UPSTREAM_BROKEN, f"{label} returned no results"
                 )
                 attempts.append(_attempt(platform, source, "EMPTY", started))
                 continue
             attempts.append(_attempt(platform, source, "OK", started))
+            limiter.note_success(platform.id, label)
             return PlatformOutcome(
                 platform_id=platform.id,
                 items=items,
-                backend=source_label(source),
+                backend=label,
                 attempts=attempts,
             )
         except ReachError as exc:
             last_error = exc
+            limiter.note_error(
+                platform.id, label, exc.code, retry_after=exc.retry_after_seconds
+            )
             attempts.append(_attempt(platform, source, "ERROR", started, error=exc))
             if exc.code in FINAL_CODES:
                 return PlatformOutcome(
@@ -384,6 +443,9 @@ def _try_platform(
         except Exception as exc:
             error = classify(exc)
             last_error = error
+            limiter.note_error(
+                platform.id, label, error.code, retry_after=error.retry_after_seconds
+            )
             attempts.append(_attempt(platform, source, "ERROR", started, error=error))
             if error.code in FINAL_CODES:
                 return PlatformOutcome(
@@ -396,8 +458,10 @@ def _try_platform(
     return PlatformOutcome(
         platform_id=platform.id,
         attempts=attempts,
-        error=last_error
+        error=paused_error
+        or last_error
         or ReachError(UPSTREAM_BROKEN, f"platform {platform.id!r} produced no result"),
+        final=paused_error is not None and paused_error.code in FINAL_CODES,
     )
 
 
@@ -421,6 +485,7 @@ def _run_first_success(
     ctx: Any,
     adapters: Mapping[str, Any],
     started: float,
+    limiter: Optional[RateLimits] = None,
 ) -> dict:
     attempts: list[dict] = []
     last_error: Optional[ReachError] = None
@@ -428,7 +493,12 @@ def _run_first_success(
     for platform_id in plan.platform_ids:
         last_platform = platform_id
         outcome = _try_platform(
-            registry.platforms[platform_id], action_name, params, ctx=ctx, adapters=adapters
+            registry.platforms[platform_id],
+            action_name,
+            params,
+            ctx=ctx,
+            adapters=adapters,
+            limiter=limiter,
         )
         attempts.extend(outcome.attempts)
         if outcome.items:
@@ -467,6 +537,7 @@ def _run_aggregate(
     started: float,
     per_platform_limit: int = 5,
     dedupe: bool = True,
+    limiter: Optional[RateLimits] = None,
 ) -> dict:
     limit = plan.top or len(plan.platform_ids)
     platform_ids = list(plan.platform_ids[:limit])
@@ -474,7 +545,12 @@ def _run_aggregate(
 
     if len(platform_ids) == 1:
         outcomes[platform_ids[0]] = _try_platform(
-            registry.platforms[platform_ids[0]], action_name, params, ctx=ctx, adapters=adapters
+            registry.platforms[platform_ids[0]],
+            action_name,
+            params,
+            ctx=ctx,
+            adapters=adapters,
+            limiter=limiter,
         )
     else:
         with ThreadPoolExecutor(max_workers=min(4, len(platform_ids))) as pool:
@@ -486,6 +562,7 @@ def _run_aggregate(
                     params,
                     ctx=ctx,
                     adapters=adapters,
+                    limiter=limiter,
                 ): platform_id
                 for platform_id in platform_ids
             }
@@ -546,9 +623,11 @@ def run_action(
     url: Optional[str] = None,
     mode: Optional[str] = None,
     adapters: Optional[Mapping[str, Any]] = None,
+    rate_limits: Optional[RateLimits] = None,
 ) -> dict:
     """Plan and execute one action, always returning a valid envelope."""
     started = time.monotonic()
+    limiter = rate_limits or RateLimits()
     try:
         plan = build_plan(
             registry,
@@ -620,6 +699,7 @@ def run_action(
             started=started,
             per_platform_limit=per_platform_limit,
             dedupe=bool(aggregate.get("dedupe", True)),
+            limiter=limiter,
         )
     return _run_first_success(
         registry,
@@ -629,4 +709,5 @@ def run_action(
         ctx=ctx,
         adapters=selected_adapters,
         started=started,
+        limiter=limiter,
     )

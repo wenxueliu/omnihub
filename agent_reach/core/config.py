@@ -81,6 +81,15 @@ def config_dir(*, home: Optional[Path | str] = None) -> Path:
     return base / ".agent-reach" / "config"
 
 
+def state_dir(*, home: Optional[Path | str] = None) -> Path:
+    """Writable runtime state (cooldowns, pauses); override with REACH_STATE_DIR."""
+    override = os.environ.get("REACH_STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+    base = Path(home).expanduser() if home is not None else Path.home()
+    return base / ".agent-reach" / "state"
+
+
 def project_config_dir(project_dir: Optional[Path | str] = None) -> Path:
     base = Path(project_dir).expanduser() if project_dir is not None else Path.cwd()
     return base / ".agent-reach" / "config"

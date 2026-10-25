@@ -20,6 +20,8 @@ MAX_TIMEOUT = 300.0
 DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 MAX_MAX_BYTES = 64 * 1024 * 1024
 
+MAX_MIN_INTERVAL = 10.0
+
 
 @dataclass(frozen=True)
 class Limits:
@@ -63,6 +65,19 @@ def clamp_max_bytes(value: Optional[int], *, default: int = DEFAULT_MAX_BYTES) -
     if size < 1:
         raise ReachError(BAD_INPUT, "max_bytes must be positive")
     return min(size, MAX_MAX_BYTES)
+
+
+def clamp_min_interval(value: Optional[float]) -> float:
+    """Validate a source pacing interval and cap how long a caller may sleep."""
+    if value is None:
+        return 0.0
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ReachError(BAD_INPUT, "min_interval must be a number") from None
+    if seconds < 0:
+        raise ReachError(BAD_INPUT, "min_interval cannot be negative")
+    return min(seconds, MAX_MIN_INTERVAL)
 
 
 def ensure_public_url(url: str) -> str:
