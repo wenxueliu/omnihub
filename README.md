@@ -97,16 +97,16 @@ omnihub platforms --text
 
 ```bash
 # 安装后使用 xiaohongshu-cli；未安装则用 python -m
-python -m omnihub.xiaohongshu_cli login-status
-python -m omnihub.xiaohongshu_cli search "西安 红叶" --limit 5
-python -m omnihub.xiaohongshu_cli read 6addcd87000000002c00cb5a
-python -m omnihub.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
+python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli login-status
+python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli search "西安 红叶" --limit 5
+python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli read 6addcd87000000002c00cb5a
+python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
 ```
 
 输出统一为 `{"ok": true, "data": ...}`，错误时为
 `{"ok": false, "error": {"code", "message"}}` 并以非零码退出。token 缓存在
 `$XDG_CACHE_HOME/xiaohongshu-cli/notes.json`（0600，不保存查询词）。使用说明
-见 [`skill/xiaohongshu-cli/SKILL.md`](skill/xiaohongshu-cli/SKILL.md)。
+见 [`omnihub/platforms/xiaohongshu/xiaohongshu-cli/SKILL.md`](omnihub/platforms/xiaohongshu/xiaohongshu-cli/SKILL.md)。
 
 `web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
@@ -163,7 +163,6 @@ python -m omnihub.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL
 ```
 omnihub/
   cli.py                 # platforms / doctor / explain / check / cooldowns / search / read / transcribe
-  xiaohongshu_cli.py     # kimi-webbridge 小红书 CLI（login-status / search / read）
   transcribe.py          # ffmpeg 压缩切片 + Groq/OpenAI Whisper 音频转写
   core/
     config.py            # 分层 routing 配置
@@ -198,7 +197,7 @@ omnihub/
   platforms/youtube/     # Exa 搜索与视频页/字幕读取、浏览器兜底
   platforms/twitter/     # 登录态浏览器搜索与推文读取（Exa 搜索兜底）
   platforms/xueqiu/      # 登录态浏览器讨论搜索与状态读取
-  platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取
+  platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取；含独立 xiaohongshu_cli.py 与 skill
   platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取、Whisper 转写
   platforms/linkedin/    # 浏览器内 guest API 职位搜索与职位详情
   platforms/deepwiki/    # 公开 MCP 读取仓库 DeepWiki 文档
