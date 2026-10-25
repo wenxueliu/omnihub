@@ -646,7 +646,7 @@ def _result_text(payload: dict) -> None:
     if not items:
         print("(no results)")
         return
-    read_mode = payload.get("action") == "read"
+    full_text = payload.get("action") in {"read", "transcribe"}
     for item in items:
         print(item.get("title") or "(untitled)")
         if item.get("url"):
@@ -655,7 +655,7 @@ def _result_text(payload: dict) -> None:
             print(f"  from {item['platform']}/{item.get('source') or '-'}")
         text = item.get("text")
         if text:
-            if read_mode:
+            if full_text:
                 print(text)
             else:
                 print(" ".join(str(text).split())[:400])
@@ -787,6 +787,36 @@ def _cmd_read(args: argparse.Namespace) -> int:
         routing,
         action="read",
         params={"target": args.target},
+        ctx=context,
+        platform=args.platform,
+        url=args.target,
+        mode=args.mode,
+    )
+    _emit(payload, text=args.text, render_text=_result_text)
+    return _exit_code(payload)
+
+
+def _cmd_transcribe(args: argparse.Namespace) -> int:
+    registry, routing, code = _prepare_action(args, "transcribe")
+    if registry is None or routing is None:
+        return code
+    context, error_code = _make_context(args)
+    if context is None:
+        return int(error_code)
+    params = {"target": args.target}
+    if args.provider:
+        params["provider"] = args.provider
+    if args.model:
+        params["model"] = args.model
+    if args.language is not None:
+        params["language"] = args.language
+    if args.polish:
+        params["polish"] = True
+    payload = run_action(
+        registry,
+        routing,
+        action="transcribe",
+        params=params,
         ctx=context,
         platform=args.platform,
         url=args.target,
@@ -1000,6 +1030,28 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("target", help="Public URL or platform-specific identifier.")
     _add_action_args(read, search=False)
     read.set_defaults(func=_cmd_read)
+
+    transcribe = subparsers.add_parser(
+        "transcribe",
+        help="Download an episode's audio and transcribe it to text.",
+    )
+    transcribe.add_argument("target", help="Episode URL or a direct public audio URL.")
+    transcribe.add_argument(
+        "--provider",
+        choices=("auto", "groq", "openai"),
+        help="Whisper-compatible API; auto uses the first configured key.",
+    )
+    transcribe.add_argument("--model", help="Override the provider's Whisper model.")
+    transcribe.add_argument(
+        "--language", help="Spoken language hint passed to Whisper (default: zh)."
+    )
+    transcribe.add_argument(
+        "--polish",
+        action="store_true",
+        help="Ask Groq Llama to add Chinese punctuation and paragraphs.",
+    )
+    _add_action_args(transcribe, search=False)
+    transcribe.set_defaults(func=_cmd_transcribe)
 
     return parser
 

@@ -52,6 +52,7 @@ python -m agent_reach.cli read https://x.com/user/status/1 --text
 python -m agent_reach.cli search "茅台" --platform xueqiu --limit 3
 python -m agent_reach.cli search "咖啡" --platform xiaohongshu --limit 3
 python -m agent_reach.cli search "科技" --platform xiaoyuzhou --limit 3
+python -m agent_reach.cli transcribe https://www.xiaoyuzhoufm.com/episode/6adcced4c96c8942ec11a649 --text
 python -m agent_reach.cli search "python" --platform linkedin --limit 3
 python -m agent_reach.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
 
@@ -130,7 +131,12 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
   失败或超时）都会关闭该 session 的全部标签页；并发查询不会互相关闭对方的
   标签，超时恢复也只接管 `reach:` 分组内的标签，不会动用户自己打开的页面。
 - `xiaoyuzhou`：Exa `site:xiaoyuzhoufm.com` 搜索；读取优先 Jina，daemon
-  可用时用真实浏览器兜底，最后再走 Exa fetch。
+  可用时用真实浏览器兜底，最后再走 Exa fetch。`transcribe` 从单集页面
+  提取公开音频地址，经 ffmpeg 压缩切片后调用 Whisper 兼容接口（Groq /
+  OpenAI）转文字，`--polish` 再让 Groq Llama 补中文标点。需要
+  `ffmpeg` 与 `GROQ_API_KEY` 或 `OPENAI_API_KEY`（环境变量或
+  `~/.agent-reach/secrets.yaml`）；密钥缺失时返回 `NEED_SETUP`，不会影响
+  `search` / `read`。
 - 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
   `check` 只对搜索做 live 回归。
 - `deepwiki`：读取公开仓库的 DeepWiki 文档。直接 POST 官方 MCP 端点
@@ -147,8 +153,9 @@ python -m agent_reach.xiaohongshu_cli read <note-id> --author-url "<作者主页
 
 ```
 agent_reach/
-  cli.py                 # platforms / doctor / explain / check / cooldowns / search / read
+  cli.py                 # platforms / doctor / explain / check / cooldowns / search / read / transcribe
   xiaohongshu_cli.py     # kimi-webbridge 小红书 CLI（login-status / search / read）
+  transcribe.py          # ffmpeg 压缩切片 + Groq/OpenAI Whisper 音频转写
   core/
     config.py            # 分层 routing 配置
     context.py           # 子进程、HTTP、secret；超时/输出上限
@@ -183,7 +190,7 @@ agent_reach/
   platforms/twitter/     # 登录态浏览器搜索与推文读取（Exa 搜索兜底）
   platforms/xueqiu/      # 登录态浏览器讨论搜索与状态读取
   platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取
-  platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取
+  platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取、Whisper 转写
   platforms/linkedin/    # 浏览器内 guest API 职位搜索与职位详情
   platforms/deepwiki/    # 公开 MCP 读取仓库 DeepWiki 文档
   platforms/notebooklm/  # 本地 notebooklm CLI：笔记本搜索与摘要
@@ -194,7 +201,7 @@ agent_reach/
 
 每个平台是一个目录，`platform.yaml` 是唯一必需文件。删除目录即下线，
 不需要改核心代码。声明式平台直接引用共享适配器；需要代码时，平台目录可
-提供 `search.py` / `read.py` / `parse.py`（仅内置平台默认受信任）。
+提供 `search.py` / `read.py` / `parse.py` / `transcribe.py`（仅内置平台默认受信任）。
 
 ```yaml
 id: example
@@ -233,7 +240,7 @@ kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭�
 
 插件放在 `$REACH_PLUGIN_PATH`、`~/.agent-reach/plugins/<id>/` 或
 `./.agent-reach/plugins/<id>/`，同名覆盖内置平台。纯清单插件直接加载；
-带 `search.py` / `read.py` / `parse.py` 的插件是在用户权限下执行 Python，
+带 `search.py` / `read.py` / `parse.py` / `transcribe.py` 的插件是在用户权限下执行 Python，
 因此必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写 `[]`）
 并且显式信任：
 

@@ -1,9 +1,9 @@
 id: xiaoyuzhou
-description: Xiaoyuzhou podcast episode search through Exa and page reads through Jina or the browser.
+description: Xiaoyuzhou podcast episode search, page reads, and Whisper transcription.
 version: 1
 level: optional
 priority: 180
-capabilities: [http]
+capabilities: [http, exec]
 
 check:
   search: {query: "科技", limit: 2}
@@ -104,3 +104,34 @@ actions:
           - exa_read
         priority: 30
         timeout: 45
+
+  transcribe:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Episode URL on xiaoyuzhoufm.com, or a direct public audio URL.
+      provider:
+        type: str
+        default: auto
+        choices: [auto, groq, openai]
+        description: Whisper-compatible API; auto uses the first configured key.
+      model:
+        type: str
+        description: Override the provider's default Whisper model.
+      language:
+        type: str
+        default: zh
+        description: Spoken language hint passed to Whisper.
+      polish:
+        type: bool
+        default: false
+        description: Ask Groq Llama to add Chinese punctuation and paragraphs.
+    sources:
+      - adapter: builtin
+        name: whisper
+        call: transcribe
+        tool: ffmpeg
+        priority: 10
+        timeout: 300

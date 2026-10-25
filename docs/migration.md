@@ -156,7 +156,7 @@ facebook、instagram、boss 明确不迁移。
 | twitter (X) | search, profile, tweets, thread | daemon `browse`：`x.com/search?f=live` 提取 `article`；详情页读 `article`。Exa `site:x.com` 搜索兜底 | 已迁移（search/read；profile/tweets/thread 未提供） |
 | xueqiu | quote, search(股票), hot_posts, hot_stocks | daemon `browse`：`/k?q=` 提取 `.timeline__item`；状态页读 `h1` + `.article__bd__detail` | 已迁移（search/read） |
 | xiaohongshu | search, read, comments | daemon `browse`：`search_result` 提取 `section.note-item`；详情读 `#detail-title` / `#detail-desc` | 已迁移（search/read；comments 未提供） |
-| xiaoyuzhou | 转写 / 外部搜索 | Exa `site:xiaoyuzhoufm.com` 搜索；Jina → daemon → Exa 读取 | 已迁移（search/read；转写未提供） |
+| xiaoyuzhou | 转写 / 外部搜索 | Exa `site:xiaoyuzhoufm.com` 搜索；Jina → daemon → Exa 读取；页面音频 → ffmpeg 压缩切片 → Groq/OpenAI Whisper 转写 | 已迁移（search/read/transcribe） |
 | linkedin | jobs, read | daemon `browse` 内调用 public guest API（搜索 + 职位详情） | 已迁移（search/read） |
 | facebook | search, profile | 仍仅 OpenCLI | 不迁移 |
 | instagram | search(用户), profile, posts | 仍仅 OpenCLI | 不迁移 |

@@ -133,8 +133,9 @@ def render_skill(registry: Registry, *, cli: str = _CLI) -> str:
             "`~/.agent-reach/plugins/<id>/` or `./.agent-reach/plugins/<id>/`. "
             "Validate one with `reach-platforms plugin validate <dir>`.",
             "Declarative plugins load directly. A plugin that ships "
-            "`search.py`, `read.py` or `parse.py` must declare `capabilities` "
-            "and is only executed after `--trust-plugin <id>` or "
+            "`search.py`, `read.py`, `parse.py` or `transcribe.py` must "
+            "declare `capabilities` and is only executed after "
+            "`--trust-plugin <id>` or "
             "`REACH_TRUSTED_PLUGINS=<id>`.",
             "",
         ]

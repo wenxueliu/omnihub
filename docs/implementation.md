@@ -841,7 +841,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   `./.agent-reach/plugins/`，同名覆盖内置；删除目录即下线。
 - `plugin validate [PATH...]` / `plugin list`：只校验不执行；检查 schema、
   目录名与 id、跨文件引用、Python hooks 与能力声明，输出 errors/warnings。
-- 插件信任：纯清单插件直接加载；带 `search.py` / `read.py` / `parse.py`
+- 插件信任：纯清单插件直接加载；带 `search.py` / `read.py` / `parse.py` / `transcribe.py`
   的插件必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写
   `[]`），并在 `--trust-plugin <id>` 或 `REACH_TRUSTED_PLUGINS` 后才执行。
   未信任时平台仍可被发现，运行时返回 `NEED_SETUP`。
@@ -996,7 +996,11 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
     `#detail-desc` / `.note-content`。读链接必须带搜索结果的 `xsec_token`，
     因此该平台只声明 `check.search`。
   - `xiaoyuzhou` (180)：站点没有可用的内容搜索路由，搜索走 Exa
-    `site:xiaoyuzhoufm.com`；读取为 Jina → daemon → Exa。
+    `site:xiaoyuzhoufm.com`；读取为 Jina → daemon → Exa。`transcribe` 从单集
+    页面的 `__NEXT_DATA__` 提取公开音频地址，拒绝付费/私密单集，经 ffmpeg
+    压缩为 16kHz 单声道并按 10 分钟切片后调用 Groq 或 OpenAI 的 Whisper
+    兼容接口；上传前检查 25MB/切片数/总字节上限，密钥只从 `ctx.secret`
+    读取。`--polish` 使用 Groq Llama 补中文标点，失败时回退原始转写。
   - `linkedin` (190)：在已登录页面内调用 public guest API
     `/jobs-guest/jobs/api/seeMoreJobPostings/search` 与
     `/jobs-guest/jobs/api/jobPosting/<id>`，用正则解析 HTML（LinkedIn 的

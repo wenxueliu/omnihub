@@ -26,7 +26,7 @@ BUILTIN_PLATFORM_DIR = PACKAGE_DIR / "platforms"
 BUILTIN_TOOL_DIR = PACKAGE_DIR / "tools"
 SCHEMA_DIR = Path(__file__).resolve().parent / "schema"
 MANIFEST_NAME = "platform.yaml"
-CODE_HOOKS = ("search.py", "read.py", "parse.py")
+CODE_HOOKS = ("search.py", "read.py", "parse.py", "transcribe.py")
 TRUST_ENV = "REACH_TRUSTED_PLUGINS"
 
 _SCHEMA_CACHE: dict[str, Draft202012Validator] = {}
