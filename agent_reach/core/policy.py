@@ -7,10 +7,19 @@ weaken SSRF or resource protections by editing its own YAML.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlsplit
 
-from agent_reach.core.result import BAD_INPUT, FINAL_CODES, ReachError, classify
+from agent_reach.core.result import (
+    BAD_INPUT,
+    FINAL_CODES,
+    UPSTREAM_BROKEN,
+    ReachError,
+    classify,
+)
 from agent_reach.utils.url import host_matches, normalize_public_http_url
 
 DEFAULT_TIMEOUT = 30.0
@@ -86,6 +95,55 @@ def ensure_public_url(url: str) -> str:
         return normalize_public_http_url(url)
     except ValueError as exc:
         raise ReachError(BAD_INPUT, str(exc)) from None
+
+
+def ensure_public_resolution(url: str) -> list[str]:
+    """Resolve the URL's host and reject non-public answers.
+
+    ``ensure_public_url`` only inspects the literal host, so a public-looking
+    name that resolves to ``127.0.0.1`` (``localtest.me`` is a common example)
+    would otherwise reach local services. Every answer must be globally
+    routable. Requests resolves the name again when it connects, so a DNS
+    rebinding attacker still has a narrow window; this closes the ordinary
+    case without pinning the connection.
+    """
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if not host:
+        raise ReachError(BAD_INPUT, "only public HTTP(S) URLs are allowed")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return [host]
+    try:
+        ascii_host = host.encode("ascii").decode("ascii")
+    except UnicodeError:
+        try:
+            ascii_host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            raise ReachError(BAD_INPUT, f"cannot resolve {host!r}") from None
+    try:
+        infos = socket.getaddrinfo(ascii_host, None, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError) as exc:
+        raise ReachError(UPSTREAM_BROKEN, f"cannot resolve {host!r}: {exc}") from None
+    addresses: list[str] = []
+    for info in infos:
+        raw = str(info[4][0]).split("%", 1)[0]
+        try:
+            address = ipaddress.ip_address(raw)
+        except ValueError:
+            raise ReachError(BAD_INPUT, f"cannot resolve {host!r}") from None
+        if not address.is_global:
+            raise ReachError(
+                BAD_INPUT,
+                f"refusing to fetch {host!r}: it resolves to the "
+                f"non-public address {address}",
+            )
+        addresses.append(str(address))
+    if not addresses:
+        raise ReachError(UPSTREAM_BROKEN, f"cannot resolve {host!r}")
+    return addresses
 
 
 def url_matches(url: str, *domains: str) -> bool:

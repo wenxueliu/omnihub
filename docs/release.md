@@ -11,19 +11,20 @@
 
 ```bash
 python -m pytest -q
-# 256 tests
+# 262 tests
 ```
 
 覆盖：schema 与 manifest 契约、目录删除隔离、路由与聚合、模板与解析器、
 HTTP/CLI/OpenCLI/daemon/builtin 适配器、`check` 聚合与 cooling/failed 区分、
-插件信任、冷却账本（查询 / 清除 / pacing）、`Retry-After` 解析、真实
-loopback HTTP server 与 fake binary。
+插件信任、冷却账本（查询 / 清除 / pacing）、`Retry-After` 解析、DNS 解析
+校验、真实 loopback HTTP server 与 fake binary。
 
 安全相关用例：
 
 | 项 | 结果 |
 |---|---|
 | 私有/loopback/带 userinfo 的 URL 被拒 | 通过 |
+| 公网域名解析到私网地址时请求被拒（含重定向） | 通过 |
 | 跨域重定向移除 `Authorization` / `Cookie` | 通过 |
 | CLI 使用 argv 数组、禁止 `shell=True` | 通过 |
 | 超时杀进程组、输出截断且排空管道 | 通过 |

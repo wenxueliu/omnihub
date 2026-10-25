@@ -30,6 +30,7 @@ from agent_reach.core.policy import (
     DEFAULT_TIMEOUT,
     clamp_max_bytes,
     clamp_timeout,
+    ensure_public_resolution,
     ensure_public_url,
 )
 from agent_reach.core.result import (
@@ -272,6 +273,7 @@ class Context:
         max_bytes: Optional[int] = None,
     ) -> RawResult:
         current = ensure_public_url(url)
+        ensure_public_resolution(current)
         verb = str(method or "GET").upper()
         seconds = clamp_timeout(timeout, default=self.timeout)
         cap = clamp_max_bytes(max_bytes, default=self.max_bytes)
@@ -299,6 +301,7 @@ class Context:
             location = response.headers.get("Location")
             if response.status_code in {301, 302, 303, 307, 308} and location:
                 next_url = ensure_public_url(urljoin(current, location))
+                ensure_public_resolution(next_url)
                 if _origin(current) != _origin(next_url):
                     # Never forward credentials across an origin change.
                     for key in list(request_headers):

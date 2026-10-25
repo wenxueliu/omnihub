@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+import socket
 import sys
 import time
 
@@ -14,6 +16,30 @@ from agent_reach.core.result import (
     UPSTREAM_BROKEN,
     ReachError,
 )
+
+
+def _answer(*addresses):
+    return [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, 0))
+        for address in addresses
+    ]
+
+
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _offline_dns(monkeypatch):
+    """Keep the suite offline: public names resolve, literal IPs stay real."""
+
+    def resolve(host, port, *args, **kwargs):
+        try:
+            address = ipaddress.ip_address(str(host))
+        except ValueError:
+            return _answer("93.184.216.34")
+        return _REAL_GETADDRINFO(str(address), port, *args, **kwargs)
+
+    monkeypatch.setattr("agent_reach.core.policy.socket.getaddrinfo", resolve)
 
 
 class FakeResponse:
@@ -254,3 +280,80 @@ def test_loopback_http_talks_to_a_real_local_server():
         thread.join(timeout=2)
     assert result.data == {"running": True}
     assert result.content_type == "application/json"
+
+
+def test_http_rejects_a_hostname_that_resolves_to_loopback(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.core.policy.socket.getaddrinfo",
+        lambda *args, **kwargs: _answer("127.0.0.1"),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/")
+    assert info.value.code == BAD_INPUT
+    assert "non-public address" in info.value.message
+
+
+def test_http_rejects_a_mixed_public_and_private_answer(monkeypatch):
+    monkeypatch.setattr(
+        "agent_reach.core.policy.socket.getaddrinfo",
+        lambda *args, **kwargs: _answer("93.184.216.34", "10.0.0.5"),
+    )
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/")
+    assert info.value.code == BAD_INPUT
+
+
+def test_http_accepts_a_global_dns_answer(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, **kwargs):
+        calls.append(url)
+        return FakeResponse(body=b"hello")
+
+    monkeypatch.setattr("agent_reach.core.context.requests.request", fake_request)
+    result = Context().http("https://example.com/a")
+    assert result.text == "hello"
+    assert calls == ["https://example.com/a"]
+
+
+def test_http_reports_dns_failure_as_upstream_broken(monkeypatch):
+    def fail(*args, **kwargs):
+        raise socket.gaierror("no such host")
+
+    monkeypatch.setattr("agent_reach.core.policy.socket.getaddrinfo", fail)
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/")
+    assert info.value.code == UPSTREAM_BROKEN
+    assert "cannot resolve" in info.value.message
+
+
+def test_redirect_to_a_private_resolution_is_rejected(monkeypatch):
+    requested = []
+
+    def fake_request(method, url, **kwargs):
+        requested.append(url)
+        return FakeResponse(
+            status=302, headers={"Location": "https://internal.example/"}
+        )
+
+    def resolve(host, *args, **kwargs):
+        return _answer("127.0.0.1" if host == "internal.example" else "93.184.216.34")
+
+    monkeypatch.setattr("agent_reach.core.policy.socket.getaddrinfo", resolve)
+    monkeypatch.setattr("agent_reach.core.context.requests.request", fake_request)
+    with pytest.raises(ReachError) as info:
+        Context().http("https://example.com/start")
+    assert info.value.code == BAD_INPUT
+    assert requested == ["https://example.com/start"]
+
+
+def test_literal_public_ip_needs_no_dns(monkeypatch):
+    def explode(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("a literal IP must not be resolved")
+
+    def fake_request(method, url, **kwargs):
+        return FakeResponse(body=b"ok")
+
+    monkeypatch.setattr("agent_reach.core.policy.socket.getaddrinfo", explode)
+    monkeypatch.setattr("agent_reach.core.context.requests.request", fake_request)
+    assert Context().http("https://93.184.216.34/").text == "ok"

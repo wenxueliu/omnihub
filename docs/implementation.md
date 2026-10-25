@@ -576,8 +576,8 @@ requires:
 必须共享，不能在平台里各写一套：
 
 - **命令执行**：argv 数组，禁止 `shell=True`；cwd 默认 home；超时后杀进程组。
-- **URL**：所有请求走 `normalize_public_http_url`；重定向后复检；阻止私有 IP、userinfo、非 http(s)。
-- **输出上限**：`http_request` 已有 8 MiB；`run_cmd` 需要补 `max_output_bytes`（当前无上限）。
+- **URL**：所有请求走 `normalize_public_http_url`；重定向后复检；阻止私有 IP、userinfo、非 http(s)。发起请求前还会解析主机名，要求每个解析结果都是全局可路由地址，阻止 `localtest.me` 这类指向 loopback 的公网域名；解析失败按 `UPSTREAM_BROKEN` 处理。
+- **输出上限**：HTTP 与子进程都有字节上限，超出部分截断并排空管道。
 - **凭据**：`ctx.secret(key)`；日志与错误消息脱敏；不把 Cookie/Token 放进 `raw`。
 - **限流**：平台级 cooldown（`RATE_LIMITED` / `PLATFORM_BLOCKED`）+ 来源级 pause（`TIMEOUT` / `UPSTREAM_BROKEN` / `NEED_SETUP`），状态跨进程持久化；来源可声明 `min_interval`，核心限制上限。
 - **daemon**：只允许 loopback；校验地址来自本地配置文件；不对外暴露。
@@ -952,6 +952,17 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - **验收结果**：`python -m pytest -q` 256 项通过；覆盖 active 排序与过期
   过滤、按平台/全部清除、pacing 保留、空账本不落盘、CLI list/reset 与未知
   平台、doctor 冷却展示、check 的 cooling/failed 区分。
+
+**M5 DNS 解析加固（2026-10-25）**
+
+- `policy.ensure_public_resolution(url)` 在发起 HTTP 前解析主机名，要求全部
+  结果为 `ipaddress.is_global`；`Context.http` 对初始 URL 与每次重定向都复检。
+  阻止公网域名指向 loopback/私网（如 `localtest.me`）的 SSRF；字面 IP 不再
+  解析，DNS 失败映射 `UPSTREAM_BROKEN`，非公网答案映射 `BAD_INPUT`。
+- 残余风险：requests 连接时会再次解析，DNS rebinding 仍有窄窗口；当前方案
+  覆盖常见场景，不做连接级 IP pinning。
+- **验收结果**：`python -m pytest -q` 262 项通过；新增 loopback/混合答案/
+  DNS 失败/重定向/字面 IP 用例；真实 `check --platform web` 仍为 ok。
 
 ### M5 — 加固与发布
 

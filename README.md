@@ -243,8 +243,9 @@ aggregate:
   dedupe: true
 ```
 
-安全策略（超时上限、输出上限、URL 白名单）不在 routing 配置里，平台不能
-通过 YAML 放宽这些限制。凭据通过 `${secret:NAME}` 从环境变量或
+安全策略（超时上限、输出上限、URL 白名单与 DNS 解析校验）不在 routing
+配置里，平台不能通过 YAML 放宽这些限制。发起 HTTP 前会拒绝解析到
+loopback/私网地址的公网域名，重定向后同样复检。凭据通过 `${secret:NAME}` 从环境变量或
 `~/.agent-reach/secrets.yaml` 注入，不写进 manifest 输出。
 
 ## 设计文档
