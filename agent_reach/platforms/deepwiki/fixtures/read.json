@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "# React\n\nReact is a JavaScript library for building user interfaces.\n\n## Architecture\nReact components render declaratively and reconcile through a virtual tree."
+      }
+    ]
+  }
+}

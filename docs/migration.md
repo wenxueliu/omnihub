@@ -176,3 +176,23 @@ facebook、instagram、boss 明确不迁移。
 复用边界：只借来源顺序与错误分类思路。不要复制带凭据轮换、CDP 端口假设或
 provenance 不清晰的代码；第三方 API（Groq、Metaso）需要用户自备 Key，且要
 在 README 与 `THIRD_PARTY.md` 中写清配额与许可。
+
+## 6. 工具型平台补充（2026-10-25）
+
+`~/.agents/skills/` 下的 `deepwiki` 与 `notebooklm` 按同一模型新增为平台，
+但不属于上面的 OpenCLI 迁移：
+
+| 原 skill | 新平台 | 来源 |
+|---|---|---|
+| deepwiki（MCP 工具） | `deepwiki` (200) | builtin hook POST 公开端点 `mcp.deepwiki.com/mcp`，调用 `read_wiki_contents` |
+| notebooklm（CLI） | `notebooklm` (210) | builtin hook 调 `notebooklm list/summary --json` |
+
+取舍：
+
+- DeepWiki 的 MCP 服务只提供 `read_wiki_structure` / `read_wiki_contents` /
+  `ask_wiki_question`，没有搜索工具，因此平台只声明 `read`；不引入
+  `npx @seflless/deepwiki`，避免额外的 Node 依赖。
+- NotebookLM 的 CLI 没有服务端标题过滤，`search` 在本地按标题/id 过滤；
+  `read` 用 `summary --json --topics`，URL 先归一为 notebook id。CLI 属于
+  可选工具：缺失时来源 `SKIP`、`doctor` 为 `degraded`，`check` 将该检查记为
+  `skipped` 而不是 `failed`。

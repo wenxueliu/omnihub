@@ -1,0 +1,56 @@
+id: notebooklm
+description: Google NotebookLM notebook discovery and summaries through the local notebooklm CLI.
+version: 1
+level: optional
+priority: 210
+capabilities: [exec]
+
+check:
+  search: {query: "", limit: 1}
+
+requires:
+  adapters: [builtin]
+
+auth:
+  session: notebooklm
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Text to match against notebook titles; empty returns every notebook.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 100
+        description: Maximum number of notebooks.
+    sources:
+      - adapter: builtin
+        name: notebooklm-cli
+        tool: notebooklm
+        when: tool:notebooklm
+        call: search_notebooks
+        parse:
+          - json_items
+        priority: 10
+        timeout: 45
+
+  read:
+    params:
+      target:
+        type: str
+        required: true
+        description: Notebook id (full or unique partial), or a notebooklm.google.com notebook URL.
+    sources:
+      - adapter: builtin
+        name: notebooklm-cli
+        tool: notebooklm
+        when: tool:notebooklm
+        call: read_notebook
+        parse:
+          - json_items
+        priority: 10
+        timeout: 90

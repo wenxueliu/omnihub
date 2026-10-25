@@ -181,6 +181,32 @@ def test_check_keeps_a_network_rate_limit_as_failure(monkeypatch, capsys):
     assert payload["meta"]["failed"] == 1
 
 
+def test_check_treats_all_skipped_sources_as_skipped(monkeypatch, capsys):
+    payload = {
+        "ok": False,
+        "error": {"code": "NEED_SETUP", "message": "tool 'notebooklm' is not installed"},
+        "meta": {
+            "attempts": [
+                {
+                    "platform": "notebooklm",
+                    "backend": "notebooklm-cli",
+                    "result": "SKIP",
+                    "reason": "tool 'notebooklm' is not installed",
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(cli, "run_action", lambda *args, **kwargs: payload)
+    assert main(["check", "--platform", "notebooklm"]) == 0
+    payload, _ = _payload(capsys)
+    check = payload["checks"][0]
+    assert check["status"] == "skipped"
+    assert check["ok"] is None
+    assert payload["meta"]["failed"] == 0
+    assert payload["meta"]["skipped"] == 1
+    assert payload["ok"] is True
+
+
 def test_check_text_marks_cooling_with_retry_hint(monkeypatch, capsys):
     monkeypatch.setattr(cli, "run_action", lambda *args, **kwargs: _cooldown_payload())
     assert main(["check", "--platform", "github", "--action", "search", "--text"]) == 0

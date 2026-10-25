@@ -379,6 +379,16 @@ def _cmd_skill(args: argparse.Namespace) -> int:
     return 0 if not registry.errors else 2
 
 
+def _check_skipped(payload: dict) -> bool:
+    """True when every source was skipped by a local guard.
+
+    An optional platform whose tool or adapter is absent is ``degraded`` in
+    ``doctor``; a live check must not turn that into an upstream failure.
+    """
+    attempts = (payload.get("meta") or {}).get("attempts") or []
+    return bool(attempts) and all(item.get("result") == "SKIP" for item in attempts)
+
+
 def _check_cooldown(payload: dict) -> Optional[float]:
     """Return the pause length when a check never left the local ledger.
 
@@ -413,7 +423,7 @@ def _check_text(payload: dict) -> None:
     print(
         f"{meta.get('count', 0)} check(s), {meta.get('failed', 0)} failed, "
         f"{meta.get('cooling', 0)} cooling, "
-        f"{meta.get('skipped', 0)} platform(s) without check",
+        f"{meta.get('skipped', 0)} skipped",
         file=sys.stderr,
     )
 
@@ -503,6 +513,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             )
             error = payload.get("error") or {}
             cooling = _check_cooldown(payload)
+            skipped_check = _check_skipped(payload)
             check = {
                 "platform": platform.id,
                 "action": action_name,
@@ -510,9 +521,15 @@ def _cmd_check(args: argparse.Namespace) -> int:
                 "status": (
                     "ok"
                     if payload.get("ok")
-                    else ("cooling" if cooling is not None else "failed")
+                    else (
+                        "cooling"
+                        if cooling is not None
+                        else ("skipped" if skipped_check else "failed")
+                    )
                 ),
-                "ok": True if payload.get("ok") else (None if cooling else False),
+                "ok": True
+                if payload.get("ok")
+                else (None if cooling is not None or skipped_check else False),
                 "backend": payload.get("backend"),
                 "items": len(payload.get("items") or []),
                 "elapsed_ms": int((time.monotonic() - started) * 1000),
@@ -523,6 +540,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             checks.append(check)
 
     failed = sum(1 for check in checks if check.get("ok") is False)
+    skipped += sum(1 for check in checks if check.get("status") == "skipped")
     cooling_count = sum(1 for check in checks if check.get("status") == "cooling")
     ok = failed == 0
     result = {

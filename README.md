@@ -9,7 +9,8 @@ M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按
 信任、`explain` 来源明细、`SKILL.md` 生成、平台批次二（`reddit`、
 `youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却 + 平台批次三
 （`twitter`、`xueqiu`、`xiaohongshu`、`xiaoyuzhou`、`linkedin`，浏览器
-`browse` 复合动作）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
+`browse` 复合动作）+ 工具型平台（`deepwiki` 公开 MCP、`notebooklm` 本地
+CLI）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
 `skill`、`check`、`cooldowns`、`search` 和 `read`。剩余平台、MCP 适配器详见
 `docs/implementation.md`。
 
@@ -54,6 +55,11 @@ python -m agent_reach.cli search "科技" --platform xiaoyuzhou --limit 3
 python -m agent_reach.cli search "python" --platform linkedin --limit 3
 python -m agent_reach.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
 
+# 工具型平台
+python -m agent_reach.cli read facebook/react --platform deepwiki --text
+python -m agent_reach.cli search "asyncio" --platform notebooklm --limit 3
+python -m agent_reach.cli read nbb0987654321 --platform notebooklm --text
+
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
 python -m agent_reach.cli doctor --text
 
@@ -82,8 +88,9 @@ reach-platforms platforms --text
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
 100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140、`twitter`
-150、`xueqiu` 160、`xiaohongshu` 170、`xiaoyuzhou` 180、`linkedin` 190）
-通过 `--platform`，或 routing 里自定义的 `intents` 使用。`read` 按 URL 域名
+150、`xueqiu` 160、`xiaohongshu` 170、`xiaoyuzhou` 180、`linkedin` 190、
+`deepwiki` 200、`notebooklm` 210）通过 `--platform`，或 routing 里自定义的
+`intents` 使用。`read` 按 URL 域名
 先选站点平台，再自动把 `web` 作为最后一个来源。
 
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
@@ -104,6 +111,15 @@ reach-platforms platforms --text
   可用时用真实浏览器兜底，最后再走 Exa fetch。
 - 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
   `check` 只对搜索做 live 回归。
+- `deepwiki`：读取公开仓库的 DeepWiki 文档。直接 POST 官方 MCP 端点
+  `read_wiki_contents`，无需 Node 或 API Key；接受 `owner/repo`、GitHub
+  仓库 URL 或 deepwiki.com URL。未索引的仓库返回 `NOT_FOUND` 并提示先在
+  deepwiki.com 打开一次。
+- `notebooklm`：搜索与读取本机 Google NotebookLM。`search` 用
+  `notebooklm list --json` 列出并按标题过滤，`read` 用
+  `notebooklm summary --json --topics` 返回摘要和建议问题。需要本机安装
+  `notebooklm` CLI（`pip install notebooklm-py`）并已完成 `notebooklm
+  login`；CLI 缺失时平台标记为 `degraded`，来源自动 `SKIP`。
 
 ## 目录
 
@@ -146,6 +162,8 @@ agent_reach/
   platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取
   platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取
   platforms/linkedin/    # 浏览器内 guest API 职位搜索与职位详情
+  platforms/deepwiki/    # 公开 MCP 读取仓库 DeepWiki 文档
+  platforms/notebooklm/  # 本地 notebooklm CLI：笔记本搜索与摘要
   utils/                 # URL、文本脱敏、子进程环境（复用 Agent-Reach）
 ```
 

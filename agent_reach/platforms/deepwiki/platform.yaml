@@ -1,0 +1,32 @@
+id: deepwiki
+description: DeepWiki repository documentation reads through the public MCP endpoint.
+version: 1
+level: optional
+priority: 200
+capabilities: [http]
+
+check:
+  read: {target: "facebook/react"}
+
+domains:
+  - deepwiki.com
+  - www.deepwiki.com
+
+requires:
+  adapters: [builtin]
+
+actions:
+  read:
+    params:
+      target:
+        type: str
+        required: true
+        description: owner/repo, a github.com repository URL, or a deepwiki.com URL.
+    sources:
+      - adapter: builtin
+        name: deepwiki-mcp
+        call: read_wiki
+        parse:
+          - json_items
+        priority: 10
+        timeout: 90

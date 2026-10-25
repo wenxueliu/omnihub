@@ -1,0 +1,9 @@
+{
+  "notebook_id": "nbb0987654321",
+  "summary": "The notebook collects talks and articles about asyncio internals, focusing on the event loop, coroutine scheduling and structured concurrency.",
+  "suggested_topics": [
+    "How does the event loop schedule coroutines?",
+    "When should asyncio.TaskGroup replace gather?",
+    "What are the trade-offs of running blocking code in an executor?"
+  ]
+}

@@ -39,7 +39,7 @@ cooling/failed 区分、插件信任、冷却账本（查询 / 清除 / pacing�
 
 ```bash
 python -m agent_reach.cli doctor --text
-# 12 platform(s), 0 error(s), 0 degraded
+# 14 platform(s), 0 error(s), 1 degraded
 ```
 
 | 平台 | 动作 | 必需适配器 | 可选凭据 / 浏览器 |
@@ -55,18 +55,22 @@ python -m agent_reach.cli doctor --text
 | `xiaohongshu` | search, read | — | daemon 可选 |
 | `xiaoyuzhou` | search, read | http | daemon 可选 |
 | `linkedin` | search, read | — | daemon 可选 |
+| `deepwiki` | read | builtin | —（公开 MCP，无凭据） |
+| `notebooklm` | search, read | builtin | `notebooklm` CLI 可选（缺失时 degraded） |
 | `noop` | search, read | builtin | —（离线示例） |
 
 `kimi-webbridge v2.0.23` 在本机运行。`twitter` / `xueqiu` / `xiaohongshu` /
 `linkedin` 的搜索与读取依赖它；daemon 未运行时这些平台在 `doctor` 中为
 `degraded`（来源被 `when: adapter:daemon` 跳过），不会把整体健康检查判为
-失败。
+失败。`notebooklm` 依赖本机的 `notebooklm` CLI（`pip install notebooklm-py`）；
+本机未安装，因此 `doctor` 显示 `degraded`，来源被 `when: tool:notebooklm`
+跳过。`deepwiki` 只走公开 HTTP MCP 端点，不需要登录或凭据。
 
 ## 3. 真实网络验收
 
 ```bash
 python -m agent_reach.cli check --timeout 90 --text
-# 21 check(s), 0 failed, 1 platform(s) without check
+# 23 check(s), 0 failed, 2 skipped
 ```
 
 | 平台 | 动作 | 实际 backend | 结果 |
@@ -92,8 +96,11 @@ python -m agent_reach.cli check --timeout 90 --text
 | xiaoyuzhou | read | jina | ok |
 | linkedin | search | kimi-browser | ok |
 | linkedin | read | kimi-browser | ok |
+| deepwiki | read | deepwiki-mcp | ok |
+| notebooklm | search | — | skipped（本机未安装 CLI） |
 
-`noop` 不声明 `check`，计入 `skipped`。多数检查耗时 0.1–3s；雪球页面不触发
+`noop` 不声明 `check`，`notebooklm` 的工具缺失导致来源全部 `SKIP`，二者均
+计入 `skipped` 而不是 `failed`。多数检查耗时 0.1–3s；雪球页面不触发
 `load`，导航固定等待约 30s，因此 `xueqiu` 两项各约 30s。
 
 ## 4. 功能验收

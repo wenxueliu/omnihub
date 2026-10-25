@@ -1008,6 +1008,25 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   xiaohongshu / linkedin 为 `kimi-browser`，xiaoyuzhou 为 `exa` / `jina`），
   耗时约 2 分钟，其中雪球两次导航各约 30s。
 
+**M5 工具型平台补充（2026-10-25）**
+
+- `deepwiki` (200)：builtin hook 直接 POST 公开 MCP 端点
+  `https://mcp.deepwiki.com/mcp`，调用 `read_wiki_contents`，兼容 JSON 与
+  SSE（`data:` 行）响应。目标归一支持 `owner/repo`、`github.com` 仓库 URL
+  与 `deepwiki.com` URL；未索引仓库映射 `NOT_FOUND` 并提示先索引。MCP 没有
+  搜索工具，因此只声明 `read`，也不需要 Node 或凭据。
+- `notebooklm` (210)：builtin hook 调用本机 `notebooklm` CLI。
+  `search` 用 `notebooklm list --json` 拉全量后按标题/id 本地过滤（CLI 没有
+  服务端过滤）；`read` 用 `notebooklm summary --json --topics`，先把
+  notebook URL 归一为 id，返回摘要与建议问题。
+- `notebooklm` 是可选工具：来源带 `when: tool:notebooklm`，缺失时平台在
+  `doctor` 中为 `degraded`。`check` 对“所有来源均 SKIP”的检查记录为
+  `skipped`（`ok: null`）而不是 `failed`，避免可选工具缺失被当成上游回归。
+- **验收结果**：`python -m pytest` 325 项通过；`doctor` 14 个平台、0 error、
+  1 degraded（缺 notebooklm CLI）；真实 `check` 23 项、0 failed、2 skipped
+  （noop 无 check；notebooklm 跳过），其中 `deepwiki` 经 `deepwiki-mcp`
+  返回 ok，耗时约 1.9s。
+
 ### M5 — 加固与发布
 
 **交付物**
