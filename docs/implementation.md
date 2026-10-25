@@ -1,6 +1,6 @@
 # Agent Reach 平台化重构：实现文档
 
-- **状态**：设计定稿，尚未开始实现
+- **状态**：M0–M5 已落地；278 项离线测试、21 项 live check 通过
 - **日期**：2026-10-25
 - **基线**：Agent-Reach v1.6.0（`reference/Agent-Reach`，只读参考）
 - **建议落地仓库**：`services/reach-platforms/`（独立 git 仓库）
@@ -833,7 +833,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 ### M4 — 全量迁移与插件
 
 **状态：插件部分与平台批次二已完成（2026-10-25），`python -m pytest -q`
-202 项通过**；登录类平台迁移仍待进行。
+202 项通过**；登录类平台迁移在 M5 批次三完成（见下文）。
 
 **已完成**
 
@@ -863,8 +863,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 
 **待完成**
 
-- 其余依赖登录或浏览器的平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin、facebook、instagram、boss）需要先确认可用来源，暂不迁移。
+- facebook、instagram、boss 按当前范围明确不迁移（强风控或缺少可用来源）。
+  其余登录态平台已在 M5 批次三完成。
 - 删除静态 registry 与旧 channel 类（本仓库已无旧 channel 类，此条只对
   上游迁移过程有意义）。
 
@@ -964,6 +964,50 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 - **验收结果**：`python -m pytest -q` 262 项通过；新增 loopback/混合答案/
   DNS 失败/重定向/字面 IP 用例；真实 `check --platform web` 仍为 ok。
 
+**M5 登录态平台批次三（2026-10-25）**
+
+- `daemon` 适配器新增 `browse` 复合动作：`navigate` → 读取真实
+  `location.href`/`document.title` → 登录 URL 标记检查 → 轮询 `wait_for`
+  选择器（上限 `wait_ms`，最大 30s）→ 在同一页面执行站点 JavaScript →
+  `JSON.stringify` 结果解码 → 按 `limit` 截断。
+- 站点 JavaScript 只存在于平台目录的 manifest 中，核心适配器不知道任何
+  站点选择器。搜索词通过 `location` / `URLSearchParams` 从已加载页面读取，
+  manifest 不做字符串插值，避免把用户输入拼进 JS 源码。
+- 结构化标记：`{login:true}` → `NEED_LOGIN`，`{blocked:true}` →
+  `PLATFORM_BLOCKED`，`{not_found:true}` → `NOT_FOUND`；其余站点错误继续
+  回退到下一来源。
+- 安全：`browse` 会在用户已登录的真实浏览器里执行任意 JS，因此只允许
+  builtin 或显式信任的平台调用；未信任平台返回 `NEED_SETUP`。
+- SPA 的 `load` 事件经常不触发。`navigate` 超时后不再直接失败：先用
+  `list_tabs` 复用当前 session 标签，否则从 `list_browser_tabs` 里按
+  `group_title`、目标 URL、同 host 且属于 `reach:` 分组的顺序恢复并
+  `attach_tab`；恢复失败才返回原始超时。
+- 新平台（均为 `level: optional`，`capabilities: [browser]`；daemon 来源
+  用 `when: adapter:daemon` 保护，daemon 缺失时平台在 `doctor` 中为
+  `degraded` 而不是 `error`）：
+  - `twitter` (150)：X 搜索页 `f=live`，提取 `article`、
+    `[data-testid="tweetText"]`、`User-Name`、`time[datetime]`；推文详情读
+    第一条 `article`。Exa `site:x.com` 作为搜索兜底。
+  - `xueqiu` (160)：`/k?q=` 搜索页提取 `.timeline__item`、标题/正文/作者/
+    时间；状态页读取 `h1` 与 `.article__bd__detail` / `.status-content`。
+    雪球页面不触发 load，单次导航固定约 30s，仍在 60s 来源预算内。
+  - `xiaohongshu` (170)：`search_result` 页提取 `section.note-item`、
+    `data-note-id`、`a.title`、`a.author`；详情读 `#detail-title`、
+    `#detail-desc` / `.note-content`。读链接必须带搜索结果的 `xsec_token`，
+    因此该平台只声明 `check.search`。
+  - `xiaoyuzhou` (180)：站点没有可用的内容搜索路由，搜索走 Exa
+    `site:xiaoyuzhoufm.com`；读取为 Jina → daemon → Exa。
+  - `linkedin` (190)：在已登录页面内调用 public guest API
+    `/jobs-guest/jobs/api/seeMoreJobPostings/search` 与
+    `/jobs-guest/jobs/api/jobPosting/<id>`，用正则解析 HTML（LinkedIn 的
+    Trusted Types 阻止 `DOMParser`/`innerHTML`）。HTTP 非 2xx →
+    `{blocked:true}`，404 → `{not_found:true}`。
+- facebook、instagram、boss 不在此批次（按当前范围明确不迁移）。
+- **验收结果**：`python -m pytest` 278 项通过；新增 18 项 daemon/browse
+  单测与 8 项平台契约测试；真实 `check` 21 项全部 `ok`（twitter / xueqiu /
+  xiaohongshu / linkedin 为 `kimi-browser`，xiaoyuzhou 为 `exa` / `jina`），
+  耗时约 2 分钟，其中雪球两次导航各约 30s。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -989,6 +1033,7 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 | 平台契约 | 目录存在、三项能力可解析、actions/params 合法、依赖可满足 |
 | 解析器 | fixture 输入 → 期望 Item；每个来源至少一个样本 |
 | 适配器 | fake 命令 / 本地 HTTP server；超时、非零退出、超大输出、YAML 错误 |
+| 浏览器复合动作 | fake daemon：选择器轮询、JSON 解码、登录/风控/未找到标记、导航超时后的标签恢复、未信任平台拒绝 |
 | 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
 | 限流 | 注入时钟/路径；冷却合并、来源隔离、平台回退、pacing、active/clear、损坏文件与权限 |
 | 删除 | 删除平台目录后 registry 仍可加载 |
@@ -1049,8 +1094,8 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
 M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷却可见性与
 重置、适配器边界测试、迁移指南与发布验收也已完成。剩余：
 
-- 登录/浏览器依赖平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin、facebook、instagram、boss）的来源确认结论见
-  `docs/migration.md` 第 5 节：全部依赖浏览器会话或 API Key，本机也缺少
-  `opencli` / `boss-agent-cli`，因此暂不迁移。
-- 已声明但未实现的 `mcp` / `browser` 适配器。
+- 登录/浏览器依赖平台中的 twitter、xueqiu、xiaohongshu、xiaoyuzhou、
+  linkedin 已通过 daemon `browse` 迁移（批次三）；facebook、instagram、boss
+  明确不迁移。来源确认结论保留在 `docs/migration.md` 第 5 节。
+- 已声明但未实现的 `mcp` / `browser` 适配器。当前浏览器能力由 `daemon`
+  的 `browse` 复合动作提供，不需要单独的 `browser` 适配器。

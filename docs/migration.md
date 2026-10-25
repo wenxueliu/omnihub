@@ -136,39 +136,42 @@ python -m agent_reach.cli read "<url>" --platform <id> --text
 - [ ] `doctor` 中该平台为 `ok`；缺凭据只应是 `unknown` 而非 error
 - [ ] `check --platform <id>` 的 `search` 与 `read` 均为 `ok`
       （若因冷却被跳过，先按 `retry_after_seconds` 等待，或确认上游恢复后
-      `cooldowns reset --platform <id>`）
+      `cooldowns reset --platform <id>`）；确有短时凭据的读取可只声明
+      `check.search` 并在文档说明原因
 - [ ] 至少一个 search fixture 与一个 read fixture
 - [ ] 删除目录后其余平台的测试仍然通过
 
-## 5. 登录/浏览器依赖平台的来源确认（2026-10-25）
+## 5. 登录/浏览器依赖平台的迁移结论（2026-10-25 更新）
 
-这批平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin、facebook、
-instagram、boss）**暂不迁移**。原因不是 manifest 难写，而是可用来源都依赖
-浏览器登录会话或第三方 API Key；在本机缺少相应工具与凭据时声明它们，只会
-让 `doctor` 变 degraded、`check` 无法验收。
+twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin **已完成迁移**；
+facebook、instagram、boss 明确不迁移。
 
-来源调查结论（`reference/Agent-Reach/agent_reach/channels/`、
-`reference/union-search-skill/scripts/channels/`）：
+最终选择的工具不是 OpenCLI，而是本仓库已有的 kimi-webbridge `daemon`
+适配器。新增的 `browse` 复合动作把“导航 → 等待选择器 → 执行站点 JS →
+限流/登录标记”封装为 manifest 可声明的来源；站点选择器仍留在各平台目录，
+核心不知道任何站点细节。只有 builtin 或显式信任的平台可以调用 `browse`。
 
-| 平台 | 旧动作 | 主要来源 | 登录/凭据 | 迁移结论 |
-|---|---|---|---|---|
-| twitter (X) | search, profile, tweets, thread | OpenCLI（专用浏览器会话）；search 有 Exa `site:x.com` 公共兜底 | 浏览器登录；experimental | 暂缓：公共 Exa 只适合搜索，正文/回复树需会话 |
-| xueqiu | quote, search(股票), hot_posts, hot_stocks | 腾讯公开行情；雪球 v4/v5 接口 | 行情免登录；热帖需 `xq_a_token` cookie | 暂缓：动作不是内容 search/read，需要新的 action 设计 |
-| xiaohongshu | search, read, comments | 仅 OpenCLI | 浏览器登录；read 需带 `xsec_token` 的完整链接 | 暂缓 |
-| xiaoyuzhou | 转写（Agent-Reach）/ 搜索（union-search） | Groq Whisper + ffmpeg；Metaso API | `GROQ_API_KEY` 或 `METASO_API_KEY` | 暂缓：动作是 transcribe / 外部搜索，不是本站 search/read |
-| linkedin | jobs, read | OpenCLI；公共职位页可经 Exa + Jina | 站内搜索需 `li_at` cookie | 暂缓；若要迁移先做“公共职位”子集并重新定义动作 |
-| facebook | search, profile | 仅 OpenCLI | 浏览器登录；experimental | 暂缓 |
-| instagram | search(用户), profile, posts | 仅 OpenCLI | 浏览器登录；无公共兜底 | 暂缓 |
-| boss | search, read | OpenCLI + boss-agent-cli（CDP 9222） | 浏览器登录；强风控/验证码 | 暂缓 |
+| 平台 | 旧动作 | 新来源（2026-10-25 实测） | 迁移结论 |
+|---|---|---|---|
+| twitter (X) | search, profile, tweets, thread | daemon `browse`：`x.com/search?f=live` 提取 `article`；详情页读 `article`。Exa `site:x.com` 搜索兜底 | 已迁移（search/read；profile/tweets/thread 未提供） |
+| xueqiu | quote, search(股票), hot_posts, hot_stocks | daemon `browse`：`/k?q=` 提取 `.timeline__item`；状态页读 `h1` + `.article__bd__detail` | 已迁移（search/read） |
+| xiaohongshu | search, read, comments | daemon `browse`：`search_result` 提取 `section.note-item`；详情读 `#detail-title` / `#detail-desc` | 已迁移（search/read；comments 未提供） |
+| xiaoyuzhou | 转写 / 外部搜索 | Exa `site:xiaoyuzhoufm.com` 搜索；Jina → daemon → Exa 读取 | 已迁移（search/read；转写未提供） |
+| linkedin | jobs, read | daemon `browse` 内调用 public guest API（搜索 + 职位详情） | 已迁移（search/read） |
+| facebook | search, profile | 仍仅 OpenCLI | 不迁移 |
+| instagram | search(用户), profile, posts | 仍仅 OpenCLI | 不迁移 |
+| boss | search, read | OpenCLI + boss-agent-cli（CDP 9222） | 不迁移 |
 
-本机现状：没有 `opencli`，也没有 `boss-agent-cli`，因此即使现在声明这些平台
-也无法通过 live check。迁移前置条件：
+迁移前置条件（后续新增同类平台时仍适用）：
 
-- 安装并配置对应工具（OpenCLI + 专用浏览器配置，或 boss-agent-cli + CDP）
-- 用户亲自完成站点登录，不把密码或 Cookie 交给本仓库
-- 用 `explain` 确认来源顺序，补真实 fixture，并让 `check --platform <id>`
-  的 search/read 至少各通过一次
-- 在 `docs/release.md` 记录实际 backend、登录方式与已知限制
+- 用户亲自在连接的浏览器里完成站点登录；本仓库不接收密码或 Cookie。
+- 站点 JS 只从已加载页面读取查询词（`location` / `URLSearchParams`），
+  manifest 不把 `${query}` 插值进 `code`，避免脚本注入。
+- 登录重定向用 `login_url` 或 `{login:true}` 标记；验证码/风控返回
+  `{blocked:true}`；两者分别映射 `NEED_LOGIN` / `PLATFORM_BLOCKED`。
+- 用 `explain` 确认来源顺序，并让 `check --platform <id>` 的 search/read
+  至少各通过一次；小红书的 `xsec_token` 会过期，只对搜索做 live check。
+- 在 `docs/release.md` 记录实际 backend、登录方式与已知限制。
 
 复用边界：只借来源顺序与错误分类思路。不要复制带凭据轮换、CDP 端口假设或
 provenance 不清晰的代码；第三方 API（Groq、Metaso）需要用户自备 Key，且要

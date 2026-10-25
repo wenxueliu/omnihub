@@ -1,0 +1,141 @@
+id: xiaohongshu
+description: Xiaohongshu note search and reads through the logged-in browser.
+version: 1
+level: optional
+priority: 170
+capabilities: [browser]
+
+check:
+  # Reads need the xsec_token that a search result carries; that token is
+  # short-lived, so a static read check would fail for an environmental reason.
+  search: {query: "咖啡", limit: 2}
+
+domains:
+  - xiaohongshu.com
+  - www.xiaohongshu.com
+  - xhslink.com
+  - www.xhslink.com
+
+requires:
+  adapters: []
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search Xiaohongshu notes for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of notes.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "https://www.xiaohongshu.com/search_result?keyword=${query|urlencode}&source=web_search_result_notes"
+          wait_for: "section.note-item"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "reach: xiaohongshu search"
+          login_url:
+            - "/login"
+          code: |
+            (() => {
+              const items = [];
+              const seen = new Set();
+              for (const section of document.querySelectorAll('section.note-item')) {
+                const anchors = [...section.querySelectorAll('a[href*="/search_result/"], a[href*="/explore/"]')];
+                const anchor = anchors.find(a => {
+                  const href = a.getAttribute('href') || '';
+                  return /\/search_result\/[0-9a-f]+/.test(href) || /\/explore\/[0-9a-f]+/.test(href);
+                });
+                if (!anchor) continue;
+                const href = anchor.getAttribute('href');
+                const idMatch = href.match(/\/(?:search_result|explore)\/([0-9a-f]+)/);
+                const id = idMatch ? idMatch[1] : href;
+                if (seen.has(id)) continue;
+                seen.add(id);
+                const titleEl = section.querySelector('a.title, .title');
+                const authorEl = section.querySelector('a.author, .author');
+                const footer = section.innerText.trim();
+                const title = titleEl ? titleEl.innerText.trim() : footer.split('\n')[0];
+                items.push({
+                  title: title || id,
+                  url: href.startsWith('http') ? href : 'https://www.xiaohongshu.com' + href,
+                  author: authorEl ? authorEl.innerText.trim() : null,
+                  text: footer
+                });
+              }
+              if (!items.length) {
+                const body = document.body.innerText || '';
+                if (location.href.includes('/login') || document.querySelector('.login-container')) {
+                  return JSON.stringify({login: true, message: 'xiaohongshu requires a logged-in browser session'});
+                }
+                if (/安全验证|验证码|访问频繁|异常/.test(body)) {
+                  return JSON.stringify({blocked: true, message: 'xiaohongshu returned a verification page'});
+                }
+              }
+              return JSON.stringify(items);
+            })()
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 2
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Note URL, including the xsec_token query parameter.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "${target}"
+          wait_for: "#detail-title, .note-content"
+          wait_ms: 15000
+          limit: 1
+          new_tab: false
+          group_title: "reach: xiaohongshu read"
+          login_url:
+            - "/login"
+          code: |
+            (() => {
+              const titleEl = document.querySelector('#detail-title');
+              const descEl = document.querySelector('#detail-desc, .note-content, .desc');
+              const authorEl = document.querySelector('.author-wrapper .username, .username');
+              const body = document.body.innerText || '';
+              if (!titleEl && !descEl) {
+                if (location.href.includes('/login') || document.querySelector('.login-container')) {
+                  return JSON.stringify({login: true, message: 'xiaohongshu requires a logged-in browser session'});
+                }
+                if (/安全验证|验证码|访问频繁|异常/.test(body)) {
+                  return JSON.stringify({blocked: true, message: 'xiaohongshu returned a verification page'});
+                }
+                return JSON.stringify({not_found: true, message: 'note page has no content'});
+              }
+              const text = (descEl ? descEl.innerText : body).trim();
+              return JSON.stringify({
+                url: location.href,
+                title: (titleEl ? titleEl.innerText : text.slice(0, 80)).trim(),
+                author: authorEl ? authorEl.innerText.trim() : null,
+                text
+              });
+            })()
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 60
+        min_interval: 2

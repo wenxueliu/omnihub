@@ -1,0 +1,132 @@
+id: xueqiu
+description: Xueqiu stock discussion search and status reads through the logged-in browser.
+version: 1
+level: optional
+priority: 160
+capabilities: [browser]
+
+check:
+  search: {query: "茅台", limit: 2}
+  read:
+    target: "https://xueqiu.com/8145533877/261268392"
+
+domains:
+  - xueqiu.com
+  - www.xueqiu.com
+
+requires:
+  adapters: []
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search Xueqiu for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of timeline items.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "https://xueqiu.com/k?q=${query|urlencode}"
+          wait_for: ".timeline__item"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "reach: xueqiu search"
+          code: |
+            (() => {
+              const items = [];
+              const seen = new Set();
+              for (const node of document.querySelectorAll('.timeline__item')) {
+                const link = node.querySelector('a[data-id], a[href*="/status/"]');
+                const href = link ? link.getAttribute('href') : null;
+                if (!href || seen.has(href)) continue;
+                seen.add(href);
+                const titleEl = node.querySelector('.timeline__item__title');
+                const contentEl = node.querySelector('.timeline__item__content');
+                const userEl = node.querySelector('a.user-name');
+                const dateEl = node.querySelector('.date-and-source');
+                const content = (contentEl ? contentEl.innerText : node.innerText).trim();
+                items.push({
+                  title: (titleEl ? titleEl.innerText : content).trim().slice(0, 120),
+                  url: href.startsWith('http') ? href : 'https://xueqiu.com' + href,
+                  author: userEl ? userEl.innerText.trim() : null,
+                  published_at: dateEl ? dateEl.innerText.trim() : null,
+                  text: content
+                });
+              }
+              if (!items.length) {
+                const body = document.body.innerText || '';
+                if (location.href.includes('/login') || /登录后/.test(body)) {
+                  return JSON.stringify({login: true, message: 'xueqiu requires a logged-in browser session'});
+                }
+                if (/访问过于频繁|安全验证|验证码/.test(body)) {
+                  return JSON.stringify({blocked: true, message: 'xueqiu returned a verification page'});
+                }
+              }
+              return JSON.stringify(items);
+            })()
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 2
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Xueqiu status URL.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        args:
+          url: "${target}"
+          wait_for: "h1"
+          wait_ms: 15000
+          limit: 1
+          new_tab: false
+          group_title: "reach: xueqiu read"
+          code: |
+            (() => {
+              const titleEl = document.querySelector('h1');
+              const contentEl = document.querySelector(
+                '.article__bd__detail, .status-content, .timeline__item__content'
+              );
+              const userEl = document.querySelector('.user-name, a.user-name');
+              const body = document.body.innerText || '';
+              if (!contentEl) {
+                if (location.href.includes('/login') || /登录后/.test(body)) {
+                  return JSON.stringify({login: true, message: 'xueqiu requires a logged-in browser session'});
+                }
+                if (/访问过于频繁|安全验证|验证码/.test(body)) {
+                  return JSON.stringify({blocked: true, message: 'xueqiu returned a verification page'});
+                }
+                return JSON.stringify({not_found: true, message: 'status page has no content'});
+              }
+              const text = contentEl.innerText.trim();
+              return JSON.stringify({
+                url: location.href,
+                title: (titleEl ? titleEl.innerText : text).trim().slice(0, 120),
+                author: userEl ? userEl.innerText.trim() : null,
+                text
+              });
+            })()
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 60
+        min_interval: 2

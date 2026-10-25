@@ -4,20 +4,21 @@
 - **版本**：`0.1.0`（`pyproject.toml`）
 - **范围**：M0 契约层、M1 执行层与 `web`、M2 平台批次一、M3 daemon 与
   `--enrich`、M4 插件信任 / `explain` / `skill` / 平台批次二、M5 `check`
-  与统一限流冷却。
+  与统一限流冷却、登录态平台批次三（daemon `browse`）。
 - **环境**：Linux 6.8，Python 3.12.3；真实网络可用。
 
 ## 1. 离线验收
 
 ```bash
 python -m pytest -q
-# 262 tests
+# 278 tests
 ```
 
 覆盖：schema 与 manifest 契约、目录删除隔离、路由与聚合、模板与解析器、
-HTTP/CLI/OpenCLI/daemon/builtin 适配器、`check` 聚合与 cooling/failed 区分、
-插件信任、冷却账本（查询 / 清除 / pacing）、`Retry-After` 解析、DNS 解析
-校验、真实 loopback HTTP server 与 fake binary。
+HTTP/CLI/OpenCLI/daemon/builtin 适配器、daemon `browse`（选择器等待、JSON
+解码、登录/风控/未找到标记、导航超时后的标签恢复）、`check` 聚合与
+cooling/failed 区分、插件信任、冷却账本（查询 / 清除 / pacing）、
+`Retry-After` 解析、DNS 解析校验、真实 loopback HTTP server 与 fake binary。
 
 安全相关用例：
 
@@ -30,33 +31,42 @@ HTTP/CLI/OpenCLI/daemon/builtin 适配器、`check` 聚合与 cooling/failed 区
 | 超时杀进程组、输出截断且排空管道 | 通过 |
 | daemon 仅允许 loopback、地址来自本地配置 | 通过 |
 | 未信任插件执行 Python 返回 `NEED_SETUP` | 通过 |
+| 未信任平台调用 `browse`（浏览器内任意 JS）返回 `NEED_SETUP` | 通过 |
+| `browse` 目标 URL 复检私有地址（浏览器内重定向不在本层复检） | 通过 |
 | 冷却账本目录 0700、文件 0600、拒绝 symlink 写入 | 通过 |
 
 ## 2. 静态体检
 
 ```bash
 python -m agent_reach.cli doctor --text
-# 7 platform(s), 0 error(s), 0 degraded
+# 12 platform(s), 0 error(s), 0 degraded
 ```
 
-| 平台 | 动作 | 必需适配器 | 可选凭据 |
+| 平台 | 动作 | 必需适配器 | 可选凭据 / 浏览器 |
 |---|---|---|---|
-| `web` | search, read | http | — |
+| `web` | search, read | http | daemon 可选 |
 | `github` | search, read | builtin, http | `GITHUB_TOKEN`（缺省用公共来源） |
 | `bilibili` | search, read | builtin, http | `BILIBILI_COOKIE`（缺省用 Jina/Exa） |
 | `v2ex` | search, read | builtin, http | — |
-| `reddit` | search, read | http | — |
-| `youtube` | search, read | http | — |
+| `reddit` | search, read | http | daemon 可选 |
+| `youtube` | search, read | http | daemon 可选 |
+| `twitter` | search, read | http | daemon 可选（Exa 搜索兜底） |
+| `xueqiu` | search, read | — | daemon 可选 |
+| `xiaohongshu` | search, read | — | daemon 可选 |
+| `xiaoyuzhou` | search, read | http | daemon 可选 |
+| `linkedin` | search, read | — | daemon 可选 |
 | `noop` | search, read | builtin | —（离线示例） |
 
-`kimi-webbridge v2.0.23` 在本机运行，`web` / `reddit` / `youtube` 的
-daemon 来源探测为 `ok`，但仍按可选来源处理。
+`kimi-webbridge v2.0.23` 在本机运行。`twitter` / `xueqiu` / `xiaohongshu` /
+`linkedin` 的搜索与读取依赖它；daemon 未运行时这些平台在 `doctor` 中为
+`degraded`（来源被 `when: adapter:daemon` 跳过），不会把整体健康检查判为
+失败。
 
 ## 3. 真实网络验收
 
 ```bash
-python -m agent_reach.cli check --timeout 60 --text
-# 12 check(s), 0 failed, 1 platform(s) without check
+python -m agent_reach.cli check --timeout 90 --text
+# 21 check(s), 0 failed, 1 platform(s) without check
 ```
 
 | 平台 | 动作 | 实际 backend | 结果 |
@@ -73,8 +83,18 @@ python -m agent_reach.cli check --timeout 60 --text
 | reddit | read | exa | ok |
 | youtube | search | exa | ok |
 | youtube | read | exa | ok |
+| twitter | search | kimi-browser | ok |
+| twitter | read | kimi-browser | ok |
+| xueqiu | search | kimi-browser | ok |
+| xueqiu | read | kimi-browser | ok |
+| xiaohongshu | search | kimi-browser | ok |
+| xiaoyuzhou | search | exa | ok |
+| xiaoyuzhou | read | jina | ok |
+| linkedin | search | kimi-browser | ok |
+| linkedin | read | kimi-browser | ok |
 
-`noop` 不声明 `check`，计入 `skipped`。单次耗时约 0.1–3s，受第三方服务影响。
+`noop` 不声明 `check`，计入 `skipped`。多数检查耗时 0.1–3s；雪球页面不触发
+`load`，导航固定等待约 30s，因此 `xueqiu` 两项各约 30s。
 
 ## 4. 功能验收
 
@@ -95,10 +115,15 @@ python -m agent_reach.cli check --timeout 60 --text
 
 ## 5. 已知限制
 
-- 登录或浏览器依赖的平台（twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin、facebook、instagram、boss）尚未迁移，需先确认可用来源。
+- facebook、instagram、boss 明确不在当前范围，未提供平台目录。
+- `browse` 会在用户的真实浏览器里执行平台 manifest 提供的 JavaScript，
+  因此只对 builtin 或显式信任的平台开放；第三方平台即使被加载也不能调用。
+- 小红书的读取链接必须带搜索结果里的 `xsec_token`，token 会过期，所以
+  `check` 只覆盖搜索；读取需要先用搜索拿到新链接。
+- 雪球页面不触发浏览器 `load` 事件，每次 `navigate` 约等待 30s；仍在
+  来源 60s 预算内，但 `check` 整体耗时会明显增加。
 - `mcp` 与 `browser` 适配器已声明但未实现；manifest 引用会得到
-  `NEED_SETUP`。
+  `NEED_SETUP`。浏览器能力当前由 `daemon` 的 `browse` 提供。
 - 平台级冷却会暂停该平台的全部来源。若限流来自共享托管 API（如 Exa），
   daemon 兜底来源也会一并暂停，直到冷却到期。这是为遵守“不要切后端”
   的终止码语义。

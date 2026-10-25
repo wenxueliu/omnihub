@@ -7,9 +7,11 @@
 M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按需抓取
 （kimi-webbridge `daemon` 适配器、`search --enrich N`）+ M4 插件校验与
 信任、`explain` 来源明细、`SKILL.md` 生成、平台批次二（`reddit`、
-`youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却。CLI 已支持
-`platforms`、`doctor`、`explain`、`plugin`、`skill`、`check`、`cooldowns`、`search`
-和 `read`。剩余平台迁移、MCP/浏览器适配器详见 `docs/implementation.md`。
+`youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却 + 平台批次三
+（`twitter`、`xueqiu`、`xiaohongshu`、`xiaoyuzhou`、`linkedin`，浏览器
+`browse` 复合动作）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
+`skill`、`check`、`cooldowns`、`search` 和 `read`。剩余平台、MCP 适配器详见
+`docs/implementation.md`。
 
 ## 快速开始
 
@@ -43,6 +45,15 @@ python -m agent_reach.cli read https://www.reddit.com/r/Python/comments/j531n0/a
 python -m agent_reach.cli search "asyncio tutorial" --platform youtube --limit 3
 python -m agent_reach.cli read https://www.youtube.com/watch?v=oAkLSJNr5zY --text
 
+# 登录态平台（需要本机 kimi-webbridge daemon 与浏览器登录）
+python -m agent_reach.cli search "openai" --platform twitter --limit 3
+python -m agent_reach.cli read https://x.com/user/status/1 --text
+python -m agent_reach.cli search "茅台" --platform xueqiu --limit 3
+python -m agent_reach.cli search "咖啡" --platform xiaohongshu --limit 3
+python -m agent_reach.cli search "科技" --platform xiaoyuzhou --limit 3
+python -m agent_reach.cli search "python" --platform linkedin --limit 3
+python -m agent_reach.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
+
 # 检查工具、适配器、凭据与登录提示（不发起网络请求）
 python -m agent_reach.cli doctor --text
 
@@ -70,9 +81,10 @@ reach-platforms platforms --text
 `web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
-100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140）通过
-`--platform`，或 routing 里自定义的 `intents` 使用。`read` 按 URL 域名先
-选站点平台，再自动把 `web` 作为最后一个来源。
+100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140、`twitter`
+150、`xueqiu` 160、`xiaohongshu` 170、`xiaoyuzhou` 180、`linkedin` 190）
+通过 `--platform`，或 routing 里自定义的 `intents` 使用。`read` 按 URL 域名
+先选站点平台，再自动把 `web` 作为最后一个来源。
 
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
   `GITHUB_TOKEN` 或 `GH_TOKEN` 可提高限额并访问私有仓库。
@@ -83,6 +95,15 @@ reach-platforms platforms --text
   daemon 可用时可用真实浏览器兜底（Reddit 的匿名 JSON 与 Jina 都返回 403）。
 - `youtube`：Exa `site:youtube.com` 搜索；Exa fetch 读取页面正文/字幕文本，
   daemon 可用时可用真实浏览器兜底。
+- `twitter` / `xueqiu` / `xiaohongshu` / `linkedin`：搜索与读取都通过
+  kimi-webbridge 在用户已登录的真实浏览器里执行站点 JavaScript。平台目录
+  只保存选择器与提取逻辑，`browse` 复合动作负责导航、等待选择器、登录/风控
+  标记和结果限流。daemon 不可用时这些平台记为 `degraded`，不会让 `doctor`
+  失败。Twitter 另有 Exa `site:x.com` 搜索兜底。
+- `xiaoyuzhou`：Exa `site:xiaoyuzhoufm.com` 搜索；读取优先 Jina，daemon
+  可用时用真实浏览器兜底，最后再走 Exa fetch。
+- 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
+  `check` 只对搜索做 live 回归。
 
 ## 目录
 
@@ -108,7 +129,7 @@ agent_reach/
     base.py              # Adapter / ToolCall / RawResult 协议
     builtin.py           # 平台目录内可信 Python hooks
     http.py / cli.py / opencli.py
-    daemon.py            # kimi-webbridge：/status、session、cursor 分页
+    daemon.py            # kimi-webbridge：/status、session、cursor 分页、browse 站点脚本
   parse/
     generic.py           # JSON / YAML / OpenCLI / text 解析链
     web.py               # 共享 Exa / Jina 解析器
@@ -120,6 +141,11 @@ agent_reach/
   platforms/bilibili/    # Exa 搜索、Jina / Cookie API 读取
   platforms/reddit/      # Exa 搜索与帖子读取、浏览器兜底
   platforms/youtube/     # Exa 搜索与视频页/字幕读取、浏览器兜底
+  platforms/twitter/     # 登录态浏览器搜索与推文读取（Exa 搜索兜底）
+  platforms/xueqiu/      # 登录态浏览器讨论搜索与状态读取
+  platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取
+  platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取
+  platforms/linkedin/    # 浏览器内 guest API 职位搜索与职位详情
   utils/                 # URL、文本脱敏、子进程环境（复用 Agent-Reach）
 ```
 

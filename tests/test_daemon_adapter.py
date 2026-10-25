@@ -10,7 +10,14 @@ from agent_reach.adapters.daemon import (
     discover_address,
     normalize_address,
 )
-from agent_reach.core.result import BAD_INPUT, NEED_SETUP, ReachError
+from agent_reach.core.result import (
+    BAD_INPUT,
+    NEED_LOGIN,
+    NEED_SETUP,
+    PLATFORM_BLOCKED,
+    TIMEOUT,
+    ReachError,
+)
 
 
 class FakeLoopback:
@@ -246,6 +253,263 @@ def test_daemon_read_rejects_private_targets(tmp_path):
                 args={"url": "http://127.0.0.1/secret"},
                 raw={"platform_id": "web"},
             ),
+            ctx=adapter._context,
+        )
+    assert info.value.code == BAD_INPUT
+
+
+def _browse_call(**args):
+    base = {"url": "https://example.com/search?q=x", "code": "return []"}
+    base.update(args)
+    return ToolCall(
+        adapter="daemon",
+        call="browse",
+        args=base,
+        raw={"platform_id": "example", "platform_trusted": True},
+    )
+
+
+def test_daemon_browse_navigates_waits_and_decodes_json(tmp_path):
+    evaluations = []
+
+    def handler(url, payload):
+        action = payload["action"]
+        if action == "navigate":
+            return _ok(
+                {"success": True, "url": "https://example.com/search?q=x", "tabId": 9}
+            )
+        assert action == "evaluate"
+        code = payload["args"]["code"]
+        evaluations.append(code)
+        if "location.href" in code:
+            return _ok(
+                {
+                    "type": "string",
+                    "value": json.dumps(
+                        {"url": "https://example.com/search?q=x", "title": "Example"}
+                    ),
+                }
+            )
+        if "querySelector" in code:
+            return _ok({"type": "boolean", "value": len(evaluations) > 2})
+        return _ok(
+            {
+                "type": "string",
+                "value": json.dumps(
+                    [
+                        {"title": "One", "url": "https://example.com/1", "text": "a"},
+                        {"title": "Two", "url": "https://example.com/2", "text": "b"},
+                        {"title": "Three", "url": "https://example.com/3", "text": "c"},
+                    ]
+                ),
+            }
+        )
+
+    adapter = _adapter(handler, tmp_path)
+    result = adapter.invoke(
+        _browse_call(wait_for=".result", limit=2),
+        ctx=adapter._context,
+    )
+    assert [item["title"] for item in result.data] == ["One", "Two"]
+    assert result.meta["page_url"] == "https://example.com/search?q=x"
+    assert result.meta["page_title"] == "Example"
+    assert result.meta["tab_id"] == 9
+    assert result.meta["wait_timed_out"] is False
+    assert "location.href" in evaluations[0]
+    assert evaluations[1] == '!!document.querySelector(".result")'
+    assert "querySelector" not in evaluations[-1]
+    assert '"limit"' not in evaluations[-1]
+
+
+def test_daemon_browse_maps_login_redirect_without_evaluating(tmp_path):
+    evaluations = []
+
+    def handler(url, payload):
+        if payload["action"] == "navigate":
+            return _ok({"success": True, "url": "https://example.com/login?next=/"})
+        evaluations.append(payload["args"]["code"])
+        return _ok(
+            {
+                "type": "string",
+                "value": json.dumps(
+                    {"url": "https://example.com/login?next=/", "title": "Sign in"}
+                ),
+            }
+        )
+
+    adapter = _adapter(handler, tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(
+            _browse_call(login_url="/login"),
+            ctx=adapter._context,
+        )
+    assert info.value.code == NEED_LOGIN
+    assert len(evaluations) == 1
+
+
+def test_daemon_browse_maps_structured_login_and_blocked_markers(tmp_path):
+    def reply(value):
+        def handler(url, payload):
+            if payload["action"] == "navigate":
+                return _ok({"success": True, "url": "https://example.com/"})
+            return _ok({"type": "object", "value": value})
+
+        return handler
+
+    for value, code in (
+        ({"login": True, "message": "sign in"}, NEED_LOGIN),
+        ({"blocked": True, "message": "captcha"}, PLATFORM_BLOCKED),
+    ):
+        adapter = _adapter(reply(value), tmp_path)
+        with pytest.raises(ReachError) as info:
+            adapter.invoke(_browse_call(), ctx=adapter._context)
+        assert info.value.code == code
+        assert value["message"] in info.value.message
+
+
+def test_daemon_browse_recovers_a_tab_after_navigation_timeout(tmp_path):
+    calls = []
+
+    def handler(url, payload):
+        action = payload["action"]
+        calls.append(action)
+        if action == "navigate":
+            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+        if action == "list_tabs":
+            return _ok({"success": True, "tabs": []})
+        if action == "list_browser_tabs":
+            return _ok(
+                {
+                    "tabs": [
+                        {"tabId": 3, "url": "https://example.com/unrelated"},
+                        {
+                            "tabId": 7,
+                            "url": "https://example.com/search?q=x",
+                            "groupTitle": "reach: test",
+                        },
+                    ]
+                }
+            )
+        if action == "attach_tab":
+            assert payload["args"]["tabId"] == 7
+            return _ok({"success": True, "tabId": 7, "url": "https://example.com/search?q=x"})
+        assert action == "evaluate"
+        if "location.href" in payload["args"]["code"]:
+            return _ok(
+                {
+                    "type": "string",
+                    "value": json.dumps(
+                        {"url": "https://example.com/search?q=x", "title": "Example"}
+                    ),
+                }
+            )
+        return _ok(
+            {
+                "type": "string",
+                "value": json.dumps([{"title": "One", "url": "https://example.com/1"}]),
+            }
+        )
+
+    adapter = _adapter(handler, tmp_path)
+    result = adapter.invoke(
+        _browse_call(group_title="reach: test", wait_for=None),
+        ctx=adapter._context,
+    )
+    assert result.data == [{"title": "One", "url": "https://example.com/1"}]
+    assert result.meta["nav_timed_out"] is True
+    assert result.meta["nav_recovered"] is True
+    assert result.meta["tab_id"] == 7
+    assert calls[:4] == ["navigate", "list_tabs", "list_browser_tabs", "attach_tab"]
+
+
+def test_daemon_browse_reuses_a_session_tab_after_navigation_timeout(tmp_path):
+    calls = []
+
+    def handler(url, payload):
+        action = payload["action"]
+        calls.append(action)
+        if action == "navigate":
+            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+        if action == "list_tabs":
+            return _ok(
+                {
+                    "success": True,
+                    "tabs": [
+                        {"tabId": 4, "url": "https://example.com/"},
+                        {
+                            "tabId": 9,
+                            "url": "https://example.com/",
+                            "groupTitle": "reach: test",
+                        },
+                    ],
+                }
+            )
+        assert action == "evaluate"
+        if "location.href" in payload["args"]["code"]:
+            return _ok(
+                {
+                    "value": json.dumps(
+                        {"url": "https://example.com/", "title": "Example"}
+                    )
+                }
+            )
+        return _ok({"value": json.dumps({"title": "One", "url": "https://example.com/1"})})
+
+    adapter = _adapter(handler, tmp_path)
+    result = adapter.invoke(
+        _browse_call(group_title="reach: test"), ctx=adapter._context
+    )
+    assert result.data == {"title": "One", "url": "https://example.com/1"}
+    assert result.meta["tab_id"] == 9
+    assert "list_browser_tabs" not in calls
+
+
+def test_daemon_browse_fails_when_a_timed_out_tab_cannot_be_found(tmp_path):
+    def handler(url, payload):
+        if payload["action"] == "navigate":
+            return ReachError(TIMEOUT, "navigate: page load timeout (30s)")
+        if payload["action"] == "list_tabs":
+            return _ok({"success": True, "tabs": []})
+        if payload["action"] == "list_browser_tabs":
+            return _ok({"tabs": [{"tabId": 3, "url": "https://example.com/unrelated"}]})
+        raise AssertionError("browse should stop before evaluating")
+
+    adapter = _adapter(handler, tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(
+            _browse_call(group_title="reach: test", wait_for=None),
+            ctx=adapter._context,
+        )
+    assert info.value.code == TIMEOUT
+
+
+def test_daemon_browse_requires_a_trusted_platform(tmp_path):
+    calls = []
+
+    def handler(url, payload):
+        calls.append(payload)
+        return _ok({})
+
+    adapter = _adapter(handler, tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(
+            ToolCall(
+                adapter="daemon",
+                call="browse",
+                args={"url": "https://example.com/", "code": "return []"},
+                raw={"platform_id": "example", "platform_trusted": False},
+            ),
+            ctx=adapter._context,
+        )
+    assert info.value.code == NEED_SETUP
+    assert calls == []
+
+
+def test_daemon_browse_rejects_private_targets(tmp_path):
+    adapter = _adapter(lambda url, payload: _ok({}), tmp_path)
+    with pytest.raises(ReachError) as info:
+        adapter.invoke(
+            _browse_call(url="http://127.0.0.1/secret"),
             ctx=adapter._context,
         )
     assert info.value.code == BAD_INPUT

@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
 from agent_reach.adapters.base import Health, RawResult, ToolCall
@@ -28,6 +29,7 @@ from agent_reach.core.result import (
     NEED_LOGIN,
     NEED_SETUP,
     NOT_FOUND,
+    PLATFORM_BLOCKED,
     TIMEOUT,
     UPSTREAM_BROKEN,
     ReachError,
@@ -43,6 +45,12 @@ _DEFAULT_READ_CHARS = 20000
 _MAX_READ_CHARS = 200_000
 _DEFAULT_MAX_PAGES = 8
 _MAX_PAGES = 20
+_DEFAULT_WAIT_MS = 10_000
+_MAX_WAIT_MS = 30_000
+_POLL_SECONDS = 0.25
+_MAX_CODE_CHARS = 100_000
+_DEFAULT_LIMIT = 20
+_MAX_LIMIT = 50
 
 
 class ExpiredCursor(ReachError):
@@ -187,6 +195,68 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)] if str(value).strip() else []
+
+
+def _evaluate_value(payload: Any) -> Any:
+    """Unwrap the daemon's ``evaluate`` reply ``{type, value}``."""
+    if isinstance(payload, Mapping) and "value" in payload:
+        return payload.get("value")
+    return payload
+
+
+def _maybe_json(value: Any) -> Any:
+    """Decode a JSON string returned by site JavaScript.
+
+    JavaScript snippets cannot always hand a live object back through the
+    extension, so manifests may return ``JSON.stringify(items)``. A plain
+    string that is not JSON is kept as-is.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text[0] not in "[{":
+        return value
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return value
+
+
+def _limit_value(value: Any, limit: int) -> Any:
+    if isinstance(value, list):
+        return value[:limit]
+    if isinstance(value, Mapping):
+        for key in ("items", "results", "data"):
+            entries = value.get(key)
+            if isinstance(entries, list):
+                copy = dict(value)
+                copy[key] = entries[:limit]
+                return copy
+    return value
+
+
+def _page_key(url: str) -> Optional[tuple[str, str]]:
+    """Normalize a URL to ``(host-without-www, path)`` for tab matching."""
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return None
+    return host, parts.path.rstrip("/") or "/"
+
+
 class DaemonAdapter:
     kind = "daemon"
 
@@ -253,8 +323,19 @@ class DaemonAdapter:
         base = self.addr
         session = call.session or f"reach-{call.raw.get('platform_id') or DEFAULT_SESSION}"
         args = dict(call.args or {})
+        extra_meta: dict[str, Any] = {}
         if action == "read":
             data = self._read(
+                base, session, args, call, ctx, timeout=call.timeout, max_bytes=call.max_bytes
+            )
+        elif action == "browse":
+            if not call.raw.get("platform_trusted"):
+                raise ReachError(
+                    NEED_SETUP,
+                    "daemon browse runs JavaScript in the user's browser and requires "
+                    "a built-in or explicitly trusted platform",
+                )
+            data, extra_meta = self._browse(
                 base, session, args, call, ctx, timeout=call.timeout, max_bytes=call.max_bytes
             )
         else:
@@ -271,7 +352,7 @@ class DaemonAdapter:
             ok=True,
             data=data,
             content_type="application/json",
-            meta={"daemon_action": action, "session": session},
+            meta={"daemon_action": action, "session": session, **extra_meta},
         )
 
     def _command(
@@ -405,6 +486,318 @@ class DaemonAdapter:
             "pages": pages,
             "tab_id": navigation.get("tabId") if isinstance(navigation, Mapping) else None,
         }
+
+    def _browse(
+        self,
+        base: str,
+        session: str,
+        args: dict[str, Any],
+        call: ToolCall,
+        ctx: Any,
+        *,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Navigate, optionally wait for a selector, then run site JavaScript.
+
+        ``browse`` exists because a site search is not one daemon action: the
+        page has to load (often client-rendered) before a snippet of
+        site-specific JavaScript can turn it into items. The JavaScript runs
+        inside the user's page, so it only executes for trusted platforms and
+        never receives query text through string interpolation.
+        """
+        target = args.pop("url", None) or call.url or (call.params or {}).get("target")
+        if not target:
+            raise ReachError(
+                BAD_INPUT, "daemon browse requires a url (args.url or the action target)"
+            )
+        from agent_reach.core.policy import ensure_public_url
+
+        target = ensure_public_url(str(target))
+        code = args.pop("code", None)
+        if not isinstance(code, str) or not code.strip():
+            raise ReachError(BAD_INPUT, "daemon browse requires a non-empty code argument")
+        if len(code) > _MAX_CODE_CHARS:
+            raise ReachError(
+                BAD_INPUT, f"daemon browse code exceeds {_MAX_CODE_CHARS} characters"
+            )
+        wait_for = args.pop("wait_for", None)
+        if wait_for is not None and not str(wait_for).strip():
+            wait_for = None
+        wait_ms = _positive_int(
+            args.pop("wait_ms", _DEFAULT_WAIT_MS),
+            "wait_ms",
+            minimum=0,
+            maximum=_MAX_WAIT_MS,
+        )
+        limit = _positive_int(
+            args.pop("limit", _DEFAULT_LIMIT),
+            "limit",
+            minimum=1,
+            maximum=_MAX_LIMIT,
+        )
+        new_tab = _as_bool(args.pop("new_tab", False))
+        group_title = args.pop("group_title", None)
+        login_markers = _string_list(args.pop("login_url", None))
+
+        navigate_args: dict[str, Any] = {"url": target, "newTab": new_tab}
+        if group_title:
+            navigate_args["group_title"] = str(group_title)
+        navigation: Any = {}
+        nav_timed_out = False
+        nav_recovered = False
+        nav_error: Optional[ReachError] = None
+        try:
+            navigation = self._command(
+                base,
+                "navigate",
+                navigate_args,
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except ReachError as exc:
+            # Client-rendered sites often keep a connection open and never fire
+            # the load event. The page can still be usable, so let the selector
+            # wait and the site JavaScript decide instead of failing here.
+            if exc.code != TIMEOUT:
+                raise
+            nav_timed_out = True
+            nav_error = exc
+
+        if nav_timed_out:
+            # A failed load event can still leave a usable tab behind, but the
+            # daemon does not attach it to the session. Find the tab that the
+            # navigation created (its group title is the most reliable marker)
+            # and attach it so evaluate/snapshot have a target.
+            recovered = self._recover_tab(
+                base,
+                session,
+                target,
+                group_title,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+            if recovered is None:
+                raise nav_error or ReachError(
+                    UPSTREAM_BROKEN, "kimi-webbridge navigation did not produce a usable tab"
+                )
+            navigation = recovered
+            nav_recovered = True
+
+        page_info = self._command(
+            base,
+            "evaluate",
+            {"code": "JSON.stringify({url: location.href, title: document.title})"},
+            session,
+            ctx,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
+        info = _maybe_json(_evaluate_value(page_info))
+        if isinstance(info, Mapping):
+            page_url = str(info.get("url") or target)
+            page_title = str(info.get("title") or "")
+        else:
+            page_url = (
+                str(navigation.get("url") or target)
+                if isinstance(navigation, Mapping) and navigation.get("url")
+                else target
+            )
+            page_title = ""
+        for marker in login_markers:
+            if marker in page_url:
+                raise ReachError(
+                    NEED_LOGIN,
+                    f"kimi-webbridge browse landed on a login page ({marker}); "
+                    "log in to this site in the connected browser",
+                )
+
+        waited_out = False
+        if wait_for:
+            waited_out = not self._wait_for_selector(
+                base,
+                session,
+                str(wait_for),
+                wait_ms,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+
+        payload = self._command(
+            base,
+            "evaluate",
+            {"code": code},
+            session,
+            ctx,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
+        value = _evaluate_value(payload)
+        value = _maybe_json(value)
+        if isinstance(value, Mapping):
+            message = str(value.get("message") or value.get("reason") or "").strip()
+            if value.get("login"):
+                raise ReachError(
+                    NEED_LOGIN,
+                    f"kimi-webbridge browse needs a logged-in session"
+                    + (f": {message}" if message else ""),
+                )
+            if value.get("blocked"):
+                raise ReachError(
+                    PLATFORM_BLOCKED,
+                    "the site returned a captcha or risk-control page"
+                    + (f": {message}" if message else ""),
+                )
+            if value.get("not_found"):
+                raise ReachError(
+                    NOT_FOUND, message or "the site returned no matching page"
+                )
+        value = _limit_value(value, limit)
+        meta = {
+            "page_url": page_url,
+            "page_title": page_title,
+            "tab_id": navigation.get("tabId") if isinstance(navigation, Mapping) else None,
+            "wait_timed_out": waited_out,
+            "nav_timed_out": nav_timed_out,
+            "nav_recovered": nav_recovered,
+        }
+        return value, meta
+
+    def _recover_tab(
+        self,
+        base: str,
+        session: str,
+        target: str,
+        group_title: Any,
+        ctx: Any,
+        *,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> Optional[Mapping[str, Any]]:
+        """Attach the tab a timed-out navigation left behind, if identifiable."""
+        # Reusing a session tab (newTab=false) leaves that tab current even when
+        # navigate reports a load timeout, so no attach is needed.
+        try:
+            current = self._command(
+                base,
+                "list_tabs",
+                {},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except ReachError:
+            current = None
+        session_tabs = current.get("tabs") if isinstance(current, Mapping) else None
+        if isinstance(session_tabs, list):
+            owned = [
+                tab
+                for tab in session_tabs
+                if isinstance(tab, Mapping) and tab.get("tabId") is not None
+            ]
+            if owned:
+                tagged_now = [
+                    tab
+                    for tab in owned
+                    if group_title and tab.get("groupTitle") == str(group_title)
+                ]
+                return max(
+                    tagged_now or owned, key=lambda tab: int(tab.get("tabId") or 0)
+                )
+
+        try:
+            data = self._command(
+                base,
+                "list_browser_tabs",
+                {},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except ReachError:
+            return None
+        tabs = data.get("tabs") if isinstance(data, Mapping) else None
+        if not isinstance(tabs, list):
+            return None
+        candidates = [
+            tab
+            for tab in tabs
+            if isinstance(tab, Mapping) and tab.get("tabId") is not None
+        ]
+        wanted = _page_key(target)
+        wanted_host = wanted[0] if wanted else None
+        tagged = [
+            tab
+            for tab in candidates
+            if group_title and tab.get("groupTitle") == str(group_title)
+        ]
+        same_page = [
+            tab for tab in candidates if _page_key(str(tab.get("url") or "")) == wanted
+        ]
+        # Pages redirect (search_result -> explore), and a reused tab keeps the
+        # group title of the earlier navigation. Stay inside our own groups
+        # before considering any tab on the same host.
+        same_host_owned = [
+            tab
+            for tab in candidates
+            if wanted_host
+            and (_page_key(str(tab.get("url") or "")) or ("", ""))[0] == wanted_host
+            and str(tab.get("groupTitle") or "").startswith("reach:")
+        ]
+        pool = tagged or same_page or same_host_owned
+        if not pool:
+            return None
+        chosen = max(pool, key=lambda tab: int(tab.get("tabId") or 0))
+        try:
+            attached = self._command(
+                base,
+                "attach_tab",
+                {"tabId": chosen["tabId"]},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except ReachError:
+            return None
+        return attached if isinstance(attached, Mapping) else chosen
+
+    def _wait_for_selector(
+        self,
+        base: str,
+        session: str,
+        selector: str,
+        wait_ms: int,
+        ctx: Any,
+        *,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> bool:
+        """Poll until ``selector`` exists, bounded by ``wait_ms``."""
+        deadline = time.monotonic() + (wait_ms / 1000)
+        expression = f"!!document.querySelector({json.dumps(selector)})"
+        while True:
+            payload = self._command(
+                base,
+                "evaluate",
+                {"code": expression},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+            if bool(_evaluate_value(payload)):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(_POLL_SECONDS, remaining))
 
     def _snapshot(
         self,
