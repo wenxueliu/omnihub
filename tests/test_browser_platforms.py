@@ -12,7 +12,7 @@ from omnihub.core.result import UPSTREAM_BROKEN, OmniHubError
 from omnihub.core.router import build_plan
 
 PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
-BROWSER_PLATFORMS = ("twitter", "xueqiu", "xiaohongshu", "linkedin")
+BROWSER_PLATFORMS = ("twitter", "xueqiu", "xiaohongshu", "linkedin", "zhihu")
 # WeChat has a browser source too, but Exa is its primary search source.
 BROWSER_JS_PLATFORMS = BROWSER_PLATFORMS + ("wechat",)
 
@@ -61,11 +61,13 @@ class OkHttpStub:
 
     def __init__(self, result):
         self.result = result
+        self.calls = []
 
     def probe(self):
         return Health(ok=True)
 
     def invoke(self, call, *, ctx):
+        self.calls.append(call)
         return self.result
 
 
@@ -82,8 +84,11 @@ class FailingHttpStub:
 class FakeCtx:
     timeout = 30
 
+    def __init__(self, secrets=None):
+        self.secrets = dict(secrets or {})
+
     def secret(self, name):
-        return None
+        return self.secrets.get(name)
 
     def http(self, url, *, headers=None, **kwargs):
         raise AssertionError(f"unexpected HTTP call: {url}")
@@ -122,6 +127,14 @@ SEARCH_ITEMS = {
             "text": "Shanghai",
         }
     ],
+    "zhihu": [
+        {
+            "title": "人工智能会取代程序员吗？",
+            "url": "https://www.zhihu.com/question/1/answer/2",
+            "author": "someone",
+            "text": "人工智能会取代程序员吗？",
+        }
+    ],
 }
 
 
@@ -134,6 +147,7 @@ def test_browser_platforms_are_in_the_catalog_with_their_priorities():
         "xiaoyuzhou": (180, {"xiaoyuzhoufm.com"}),
         "linkedin": (190, {"linkedin.com"}),
         "wechat": (220, {"mp.weixin.qq.com", "weixin.sogou.com"}),
+        "zhihu": (230, {"zhihu.com", "zhuanlan.zhihu.com"}),
     }
     for platform_id, (priority, domains) in expected.items():
         platform = registry.platforms[platform_id]
@@ -154,6 +168,8 @@ def test_browser_platform_domains_route_before_the_public_web_fallback():
         ("linkedin", "https://www.linkedin.com/jobs/view/42/"),
         ("wechat", "https://mp.weixin.qq.com/s/example"),
         ("wechat", "https://weixin.sogou.com/link?url=example"),
+        ("zhihu", "https://www.zhihu.com/question/1/answer/2"),
+        ("zhihu", "https://zhuanlan.zhihu.com/p/1"),
     ):
         plan = build_plan(registry, DEFAULT_ROUTING, action="read", url=url)
         assert plan.platform_ids[0] == platform_id
@@ -198,6 +214,7 @@ def test_browser_read_sources_return_a_daemon_page():
         "xueqiu": "https://xueqiu.com/1/2",
         "xiaohongshu": "https://www.xiaohongshu.com/explore/abc",
         "linkedin": "https://www.linkedin.com/jobs/view/42/",
+        "zhihu": "https://www.zhihu.com/question/1/answer/2",
     }
     for platform_id, target in targets.items():
         daemon = DaemonStub(
@@ -218,6 +235,59 @@ def test_browser_read_sources_return_a_daemon_page():
         assert result["backend"] == "kimi-browser"
         assert result["items"][0]["text"] == "body"
         assert daemon.calls[0].args["url"] == target
+
+
+def test_zhihu_read_prefers_jina_when_api_key_is_configured():
+    registry = _registry()
+    target = "https://www.zhihu.com/question/1/answer/2"
+    http = OkHttpStub(
+        RawResult(
+            text="Title: 知乎回答\n\nMarkdown Content:\n正文内容\n",
+            meta={"params": {"target": target}},
+        )
+    )
+    daemon = DaemonStub(
+        lambda call: (_ for _ in ()).throw(AssertionError("the daemon must not run"))
+    )
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={"target": target},
+        ctx=FakeCtx(secrets={"JINA_API_KEY": "jina-test-key"}),
+        platform="zhihu",
+        adapters={"daemon": daemon, "http": http},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "jina"
+    assert result["items"][0]["text"] == "正文内容"
+    assert daemon.calls == []
+    call = http.calls[0]
+    assert call.url == f"https://r.jina.ai/{target}"
+    assert call.headers["Authorization"] == "Bearer jina-test-key"
+
+
+def test_zhihu_read_skips_jina_without_api_key_and_uses_the_browser():
+    registry = _registry()
+    target = "https://www.zhihu.com/question/1/answer/2"
+    daemon = DaemonStub(
+        lambda call: RawResult(
+            data={"url": target, "title": "Example", "author": "a", "text": "body"}
+        )
+    )
+    http = HttpStub()
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={"target": target},
+        ctx=FakeCtx(),
+        platform="zhihu",
+        adapters={"daemon": daemon, "http": http},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "kimi-browser"
+    assert daemon.calls[0].args["url"] == target
 
 
 def test_wechat_search_prefers_exa_and_returns_direct_article_urls():
@@ -340,7 +410,7 @@ def test_missing_daemon_degrades_browser_platforms_instead_of_failing_doctor():
         },
     )
     rows = {row["id"]: row for row in report["platforms"]}
-    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "wechat"):
+    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "zhihu", "wechat"):
         assert rows[platform_id]["status"] == "degraded", platform_id
     assert report["errors"] == []
     assert report["meta"]["error_count"] == 0
@@ -365,13 +435,14 @@ def test_xiaoyuzhou_uses_http_sources_and_has_no_browser_dependency():
 
 def test_platform_check_declarations_are_runnable():
     registry = _registry()
-    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "wechat"):
+    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "zhihu", "wechat"):
         check = registry.platforms[platform_id].check
         assert "search" in check, platform_id
         assert "query" in check["search"]
     # Xiaohongshu reads need a short-lived xsec_token, so only search is checked.
     # WeChat article URLs are publisher-specific, so only search is checked.
     assert "read" in registry.platforms["linkedin"].check
+    assert "read" in registry.platforms["zhihu"].check
     assert "read" not in registry.platforms["xiaohongshu"].check
     assert "read" not in registry.platforms["wechat"].check
 

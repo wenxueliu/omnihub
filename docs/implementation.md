@@ -1119,6 +1119,31 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   真实文章读取（移动 UA）返回标题、公众号名、发布时间和约 8100 字正文，
   端到端约 2.3s（此前桌面 UA 首跳要约 32s）。
 
+**M5 知乎平台（2026-10-26）**
+
+- `zhihu` (230, optional, browser)：搜索与读取都只走 daemon `browse`，没有
+  HTTP 兜底；daemon 不可用时平台为 `degraded`，不影响 `doctor` 整体结果。
+- 搜索：`/search?type=content&q=` 等待 `.SearchResult-Card`，从
+  `.ContentItem-title a` 提取问题/回答链接，也接受
+  `zhuanlan.zhihu.com/p/<id>` 专栏链接；正文取 `.RichText`，时间取
+  `.SearchItem-time`，作者从摘要前缀 `作者：` 提取。查询词只从页面 URL
+  读取，脚本不做字符串插值。
+- 读取：`zhuanlan.zhihu.com/p/<id>` 读 `.Post-Title` + `.Post-RichText`；
+  问题页读 `.QuestionHeader-title` 和前三个 `.AnswerItem`；回答页按 URL 中的
+  answer id 匹配 `.AnswerItem[name=<id>]`，只返回指定回答。正文上限 60000
+  字符，超出时标记 `truncated: true` / `truncated_reason: max_chars`。
+- 读取来源顺序：配置 `JINA_API_KEY` 时优先 `http` Jina Reader（priority 5，
+  `https://r.jina.ai/<target>`，`Authorization: Bearer ${secret:JINA_API_KEY}`）；
+  未配置时该来源 SKIP，直接走 daemon `browse`（priority 10）。Jina 返回空正文
+  或反爬页时按 `UPSTREAM_BROKEN` 回退浏览器。
+- 登录/风控标记：`/signin` 或 `.SignFlowModal` → `NEED_LOGIN`；验证码/风控
+  文案 → `PLATFORM_BLOCKED`；无正文 → `NOT_FOUND`。
+- **验收结果**：`python -m pytest` 451 项通过；`doctor` 16 个平台、0 error、
+  1 degraded（notebooklm）；真实 `check --platform zhihu` 2 项全部 `ok`
+  （search 约 4.3s、read 约 5.8s）；真实读取问题页返回前三个回答、指定回答
+  页只返回目标回答、专栏文章返回完整正文。本机未配置 `JINA_API_KEY`，因此
+  Jina 优先路径由单测覆盖（来源门控、URL 与 `Authorization` 头、失败回退）。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -1206,8 +1231,8 @@ M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷
 重置、适配器边界测试、迁移指南与发布验收也已完成。剩余：
 
 - 登录/浏览器依赖平台中的 twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin 已通过 daemon `browse` 迁移（批次三），wechat 的文章读取也走同一
-  路径（搜索优先 Exa）；facebook、instagram、boss 明确不迁移。来源确认结论
-  保留在 `docs/migration.md` 第 5 节。
+  linkedin、zhihu 已通过 daemon `browse` 迁移（批次三/补充），wechat 的文章
+  读取也走同一路径（搜索优先 Exa）；facebook、instagram、boss 明确不迁移。
+  来源确认结论保留在 `docs/migration.md` 第 5 节。
 - 已声明但未实现的 `mcp` / `browser` 适配器。当前浏览器能力由 `daemon`
   的 `browse` 复合动作提供，不需要单独的 `browser` 适配器。

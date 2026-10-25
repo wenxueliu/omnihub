@@ -1,0 +1,97 @@
+id: zhihu
+description: Zhihu question/answer search and reads through the logged-in browser.
+version: 1
+level: optional
+priority: 230
+capabilities: [browser]
+
+check:
+  search: {query: "人工智能", limit: 2}
+  read:
+    target: "https://www.zhihu.com/question/2091313900331479158"
+
+domains:
+  - zhihu.com
+  - www.zhihu.com
+  - zhuanlan.zhihu.com
+
+requires:
+  adapters: []
+
+auth:
+  secret: JINA_API_KEY
+  login_url: https://jina.ai/reader/
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search Zhihu for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of results.
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        script: scripts/search.js
+        args:
+          url: "https://www.zhihu.com/search?type=content&q=${query|urlencode}"
+          wait_for: ".SearchResult-Card"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: zhihu search"
+          login_url:
+            - "/signin"
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 2
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Zhihu question, answer, or zhuanlan article URL.
+    sources:
+      - adapter: http
+        name: jina
+        when: secret:JINA_API_KEY
+        url: https://r.jina.ai/${target}
+        headers:
+          Accept: text/plain
+          User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+          Authorization: Bearer ${secret:JINA_API_KEY}
+        parse:
+          - jina
+        priority: 5
+        timeout: 30
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        script: scripts/read.js
+        args:
+          url: "${target}"
+          wait_for: ".Post-RichText, .AnswerItem, .QuestionHeader-title"
+          wait_ms: 15000
+          limit: 1
+          new_tab: false
+          group_title: "omnihub: zhihu read"
+          login_url:
+            - "/signin"
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 60
+        min_interval: 2

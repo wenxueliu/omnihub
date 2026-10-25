@@ -157,7 +157,7 @@ python -m omnihub.cli read "<url>" --platform <id> --text
 
 ## 5. 登录/浏览器依赖平台的迁移结论（2026-10-25 更新）
 
-twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin **已完成迁移**；
+twitter、xueqiu、xiaohongshu、xiaoyuzhou、linkedin、zhihu **已完成迁移**；
 facebook、instagram、boss 明确不迁移。
 
 最终选择的工具不是 OpenCLI，而是本仓库已有的 kimi-webbridge `daemon`
@@ -172,6 +172,7 @@ facebook、instagram、boss 明确不迁移。
 | xiaohongshu | search, read, comments | daemon `browse`：`search_result` 提取 `section.note-item`；详情读 `#detail-title` / `#detail-desc` | 已迁移（search/read；comments 未提供） |
 | xiaoyuzhou | 转写 / 外部搜索 | Exa `site:xiaoyuzhoufm.com` 搜索；Jina → daemon → Exa 读取；页面音频 → ffmpeg 压缩切片 → Groq/OpenAI Whisper 转写 | 已迁移（search/read/transcribe） |
 | linkedin | jobs, read | daemon `browse` 内调用 public guest API（搜索 + 职位详情） | 已迁移（search/read） |
+| zhihu | search, read | daemon `browse`：`/search?type=content&q=` 提取 `.SearchResult-Card`；问题/回答页读 `.QuestionHeader-title` + `.AnswerItem`，专栏读 `.Post-Title` + `.Post-RichText`；配置 `JINA_API_KEY` 时读取优先 Jina Reader | 已迁移（search/read） |
 | facebook | search, profile | 仍仅 OpenCLI | 不迁移 |
 | instagram | search(用户), profile, posts | 仍仅 OpenCLI | 不迁移 |
 | boss | search, read | OpenCLI + boss-agent-cli（CDP 9222） | 不迁移 |

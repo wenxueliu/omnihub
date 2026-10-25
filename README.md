@@ -14,7 +14,7 @@ M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按
 （`twitter`、`xueqiu`、`xiaohongshu`、`xiaoyuzhou`、`linkedin`，浏览器
 `browse` 复合动作）+ 工具型平台（`deepwiki` 公开 MCP、`notebooklm` 本地
 CLI）+ 微信公众号（`wechat`：Exa 搜索、Sogou 浏览器兜底、登录态浏览器
-读取）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
+读取）+ 知乎（`zhihu`：登录态浏览器搜索与问题/回答/专栏读取）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
 `skill`、`check`、`cooldowns`、`search` 和 `read`。剩余平台、MCP 适配器详见
 `docs/implementation.md`。
 
@@ -62,6 +62,9 @@ python -m omnihub.cli search "python" --platform linkedin --limit 3
 python -m omnihub.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
 python -m omnihub.cli search "人工智能" --platform wechat --limit 3
 python -m omnihub.cli read https://mp.weixin.qq.com/s/nN5HH8JGVH9IQvuM5m-bIw --text
+python -m omnihub.cli search "人工智能" --platform zhihu --limit 3
+python -m omnihub.cli read https://www.zhihu.com/question/2091313900331479158 --text
+python -m omnihub.cli read https://zhuanlan.zhihu.com/p/2097443010631955992 --text
 
 # 工具型平台
 python -m omnihub.cli read facebook/react --platform deepwiki --text
@@ -118,7 +121,7 @@ CLI 的完整参数与错误码见
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
 100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140、`twitter`
 150、`xueqiu` 160、`xiaohongshu` 170、`xiaoyuzhou` 180、`linkedin` 190、
-`deepwiki` 200、`notebooklm` 210、`wechat` 220）通过 `--platform`，或
+`deepwiki` 200、`notebooklm` 210、`wechat` 220、`zhihu` 230）通过 `--platform`，或
 routing 里自定义的 `intents` 使用。`read` 按 URL 域名
 先选站点平台，再自动把 `web` 作为最后一个来源。
 
@@ -136,11 +139,15 @@ routing 里自定义的 `intents` 使用。`read` 按 URL 域名
   daemon 可用时可用真实浏览器兜底（Reddit 的匿名 JSON 与 Jina 都返回 403）。
 - `youtube`：Exa `site:youtube.com` 搜索；Exa fetch 读取页面正文/字幕文本，
   daemon 可用时可用真实浏览器兜底。
-- `twitter` / `xueqiu` / `xiaohongshu` / `linkedin`：搜索与读取都通过
+- `twitter` / `xueqiu` / `xiaohongshu` / `linkedin` / `zhihu`：搜索与读取都通过
   kimi-webbridge 在用户已登录的真实浏览器里执行站点 JavaScript。平台目录
   只保存选择器与提取逻辑，`browse` 复合动作负责导航、等待选择器、登录/风控
   标记和结果限流。daemon 不可用时这些平台记为 `degraded`，不会让 `doctor`
-  失败。Twitter 另有 Exa `site:x.com` 搜索兜底。
+  失败。Twitter 另有 Exa `site:x.com` 搜索兜底。`zhihu` 读取支持
+  `zhihu.com/question/<id>`（返回前三个回答）、
+  `zhihu.com/question/<id>/answer/<id>`（只返回指定回答）和
+  `zhuanlan.zhihu.com/p/<id>` 专栏文章；配置 `JINA_API_KEY` 时，`read`
+  优先走 `https://r.jina.ai`，失败再回退浏览器。
 - **标签页生命周期**：每次 `read` / `browse` 使用独立 session，结束后（成功、
   失败或超时）都会关闭该 session 的全部标签页；并发查询不会互相关闭对方的
   标签，超时恢复也只接管 `omnihub:` 分组内的标签，不会动用户自己打开的页面。
