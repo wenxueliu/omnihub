@@ -13,7 +13,10 @@ PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 
 
 def _load(platform: str, filename: str):
-    path = PLATFORMS / platform / filename
+    base = PLATFORMS / platform
+    path = base / "scripts" / filename
+    if not path.is_file():
+        path = base / filename
     spec = importlib.util.spec_from_file_location(
         f"test_{platform}_{path.stem}", path
     )
@@ -364,3 +367,75 @@ def test_bilibili_subtitles_surfaces_browser_errors():
         )
     assert info.value.code == UPSTREAM_BROKEN
     assert "Bilibili view API -400" in info.value.message
+
+
+def test_bilibili_wbi_signature_matches_the_published_vector():
+    parser = _load("bilibili", "search.py")
+    key = parser.mixin_key(
+        "7cd084941338484aae1ad9425b84077c",
+        "4932caff0ff746eab6f01bf08b70ac45",
+    )
+    assert key == "ea1db124af3c7062474693fa704f4ff8"
+    query = parser.sign(
+        {"foo": "114", "bar": "514", "zab": 1919810}, key, now=1702204169
+    )
+    assert query == (
+        "bar=514&foo=114&w_rid=8f6f2b5b3d485fe1886cec6a0be8c5d4"
+        "&wts=1702204169&zab=1919810"
+    )
+
+
+def test_bilibili_search_signs_the_request_and_normalizes_videos():
+    parser = _load("bilibili", "search.py")
+    ctx = HttpStub(
+        [
+            (
+                "/x/web-interface/nav",
+                RawResult(data=_fixture("bilibili", "api_nav.json")),
+            ),
+            (
+                "/wbi/search/type",
+                RawResult(data=_fixture("bilibili", "api_search.json")),
+            ),
+        ]
+    )
+
+    items = parser.search("python 异步", limit=2, ctx=ctx)
+
+    assert len(items) == 2
+    assert items[0]["title"] == "Python 异步编程入门：从 asyncio 到事件循环"
+    assert items[0]["url"] == "https://www.bilibili.com/video/BV1xx411c7mD"
+    assert items[0]["author"] == "示例UP主"
+    assert items[0]["published_at"] == "2024-03-02T00:00:00Z"
+    assert items[0]["raw"]["duration_seconds"] == 2398 * 60 + 14
+    assert items[0]["raw"]["tags"] == ["程序员", "Python教程", "编程"]
+    assert items[0]["raw"]["cover"] == "https://i2.hdslb.com/bfs/archive/demo1.jpg"
+    # paid courses carry no bvid and are dropped; HTML entities are decoded.
+    assert items[1]["title"] == '30 分钟看懂 "Python 异步"'
+    assert all(item["url"].startswith("https://www.bilibili.com/video/BV") for item in items)
+
+    assert len(ctx.calls) == 2
+    signed = ctx.calls[1][0]
+    assert "w_rid=" in signed and "wts=" in signed
+    assert "page_size=2" in signed
+
+
+def test_bilibili_search_reports_an_intercepted_request():
+    parser = _load("bilibili", "search.py")
+    ctx = HttpStub(
+        [
+            (
+                "/x/web-interface/nav",
+                RawResult(data=_fixture("bilibili", "api_nav.json")),
+            ),
+            (
+                "/wbi/search/type",
+                RawResult(data={"code": -412, "message": "请求被拦截"}),
+            ),
+        ]
+    )
+
+    with pytest.raises(OmniHubError) as info:
+        parser.search("python", limit=1, ctx=ctx)
+    assert info.value.code == UPSTREAM_BROKEN
+    assert "-412" in info.value.message

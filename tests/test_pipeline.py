@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from omnihub.adapters.base import Health, RawResult
-from omnihub.core.pipeline import run_action
+from omnihub.core.pipeline import _custom_parsers, run_action
 from omnihub.core.registry import discover
 from omnihub.core.ratelimit import RateLimits
 from omnihub.core.result import (
@@ -23,6 +25,7 @@ class FakeAdapter:
         self.responses = responses
         self.calls = []
         self.params = []
+        self.scripts = []
 
     def probe(self):
         return Health(ok=True)
@@ -30,6 +33,7 @@ class FakeAdapter:
     def invoke(self, call, *, ctx):
         self.calls.append(call.call)
         self.params.append(dict(call.params))
+        self.scripts.append(call.script)
         value = self.responses[call.call]
         if isinstance(value, BaseException):
             raise value
@@ -88,6 +92,20 @@ def _registry(make_platform, tmp_path, platforms):
     for platform_id, data in platforms.items():
         make_platform(root, platform_id, **data)
     return discover(plugin_dirs=[root], include_builtin=False)
+
+
+def _write(directory: Path, relative: str, text: str) -> Path:
+    path = directory / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _parser_module(title: str) -> str:
+    return (
+        "def custom(raw, *, action=None, ctx=None):\n"
+        f"    return [{{'title': {title!r}}}]\n"
+    )
 
 
 def test_first_success_falls_through_sources(make_platform, tmp_path):
@@ -824,3 +842,163 @@ def test_min_interval_paces_repeat_calls(make_platform, tmp_path):
     clock.advance(0.5)
     assert run()["ok"] is True
     assert sleeps == [1.5]
+
+
+def test_build_call_resolves_an_explicit_source_script(make_platform, tmp_path):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        actions=_search_action(
+            [{**_source("search"), "script": "scripts/custom.py"}]
+        ),
+    )
+    script = _write(
+        directory,
+        "scripts/custom.py",
+        "def search(*args, **kwargs):\n    return []\n",
+    )
+    registry = discover(
+        plugin_dirs=[tmp_path / "plugins"],
+        include_builtin=False,
+        trusted_plugins=["a"],
+    )
+    adapter = FakeAdapter({"search": [{"title": "A"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+    assert adapter.scripts == [str(script.resolve())]
+
+
+@pytest.mark.parametrize("relative", ["scripts/search.py", "search.py"])
+def test_build_call_falls_back_to_the_action_module(
+    make_platform, tmp_path, relative
+):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        actions=_search_action([_source("search")]),
+    )
+    script = _write(
+        directory,
+        relative,
+        "def search(*args, **kwargs):\n    return []\n",
+    )
+    registry = discover(
+        plugin_dirs=[tmp_path / "plugins"],
+        include_builtin=False,
+        trusted_plugins=["a"],
+    )
+    adapter = FakeAdapter({"search": [{"title": "A"}]})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert result["ok"] is True
+    assert adapter.scripts == [str(script.resolve())]
+
+
+def test_explicit_parse_script_wins_over_parse_fallbacks(make_platform, tmp_path):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        parse_script="scripts/named.py",
+        actions=_search_action([_source("search", parse="custom")]),
+    )
+    _write(directory, "scripts/named.py", _parser_module("named"))
+    _write(directory, "scripts/parse.py", _parser_module("scripts"))
+    _write(directory, "parse.py", _parser_module("root"))
+    registry = discover(
+        plugin_dirs=[tmp_path / "plugins"],
+        include_builtin=False,
+        trusted_plugins=["a"],
+    )
+    adapter = FakeAdapter({"search": "raw"})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert [item["title"] for item in result["items"]] == ["named"]
+
+
+def test_custom_parser_prefers_scripts_over_the_platform_root(
+    make_platform, tmp_path
+):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        actions=_search_action([_source("search", parse="custom")]),
+    )
+    _write(directory, "scripts/parse.py", _parser_module("scripts"))
+    _write(directory, "parse.py", _parser_module("root"))
+    registry = discover(
+        plugin_dirs=[tmp_path / "plugins"],
+        include_builtin=False,
+        trusted_plugins=["a"],
+    )
+    adapter = FakeAdapter({"search": "raw"})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert [item["title"] for item in result["items"]] == ["scripts"]
+
+
+def test_custom_parser_still_accepts_a_root_module(make_platform, tmp_path):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        actions=_search_action([_source("search", parse="custom")]),
+    )
+    _write(directory, "parse.py", _parser_module("root"))
+    registry = discover(
+        plugin_dirs=[tmp_path / "plugins"],
+        include_builtin=False,
+        trusted_plugins=["a"],
+    )
+    adapter = FakeAdapter({"search": "raw"})
+    result = run_action(
+        registry,
+        _routing(),
+        action="search",
+        params={"query": "x"},
+        ctx=FakeCtx(),
+        adapters={"builtin": adapter},
+    )
+    assert [item["title"] for item in result["items"]] == ["root"]
+
+
+def test_untrusted_plugin_parser_is_not_loaded(make_platform, tmp_path):
+    directory = make_platform(
+        tmp_path / "plugins",
+        "a",
+        capabilities=["http"],
+        actions=_search_action([_source("search", parse="custom")]),
+    )
+    _write(directory, "scripts/parse.py", _parser_module("scripts"))
+    registry = discover(plugin_dirs=[tmp_path / "plugins"], include_builtin=False)
+    platform = registry.platforms["a"]
+    assert platform.trusted is False
+    assert _custom_parsers(platform) == {}

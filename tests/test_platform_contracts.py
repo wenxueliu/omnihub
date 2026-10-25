@@ -313,6 +313,16 @@ def test_reddit_search_uses_exa_and_keeps_provenance():
     assert result["items"][0]["url"].startswith("https://www.reddit.com/")
 
 
+def test_reddit_prefers_the_browser_daemon_for_both_actions():
+    registry = _registry()
+    for action_name in ("search", "read"):
+        sources = registry.platforms["reddit"].actions[action_name].enabled_sources()
+        assert [source.name for source in sources] == ["kimi-browser", "exa"]
+        assert sources[0].adapter == "daemon"
+        assert sources[0].when == "adapter:daemon"
+        assert sources[1].adapter == "http"
+
+
 def test_reddit_read_uses_exa_fetch():
     registry = _registry()
     http = HttpAdapterStub(lambda call: RawResult(data=_fixture("reddit", "read.json")))
@@ -371,23 +381,65 @@ def test_youtube_search_uses_exa_and_keeps_provenance():
     assert result["items"][0]["url"].startswith("https://www.youtube.com/watch?")
 
 
-def test_bilibili_search_uses_exa_and_keeps_provenance():
+def test_bilibili_search_uses_the_wbi_api_and_keeps_provenance():
     registry = _registry()
     http = HttpAdapterStub(lambda call: RawResult(data=_fixture("bilibili", "search.json")))
+    ctx = FakeCtx(
+        [
+            (
+                "/x/web-interface/nav",
+                RawResult(data=_fixture("bilibili", "api_nav.json")),
+            ),
+            (
+                "/wbi/search/type",
+                RawResult(data=_fixture("bilibili", "api_search.json")),
+            ),
+        ]
+    )
     result = run_action(
         registry,
         DEFAULT_ROUTING,
         action="search",
         params={"query": "python 异步", "limit": 2},
-        ctx=FakeCtx(),
+        ctx=ctx,
+        platform="bilibili",
+        adapters=_adapters(http),
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "bilibili-api"
+    assert len(result["items"]) == 2
+    assert result["items"][0]["platform"] == "bilibili"
+    assert result["items"][0]["url"].startswith("https://www.bilibili.com/video/")
+    assert http.calls == []
+
+
+def test_bilibili_search_falls_back_to_exa_when_the_api_is_intercepted():
+    registry = _registry()
+    http = HttpAdapterStub(lambda call: RawResult(data=_fixture("bilibili", "search.json")))
+    ctx = FakeCtx(
+        [
+            (
+                "/x/web-interface/nav",
+                RawResult(data=_fixture("bilibili", "api_nav.json")),
+            ),
+            (
+                "/wbi/search/type",
+                RawResult(data={"code": -412, "message": "请求被拦截"}),
+            ),
+        ]
+    )
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "python 异步", "limit": 2},
+        ctx=ctx,
         platform="bilibili",
         adapters=_adapters(http),
     )
     assert result["ok"] is True
     assert result["backend"] == "exa"
     assert len(result["items"]) == 2
-    assert result["items"][0]["platform"] == "bilibili"
-    assert result["items"][0]["url"].startswith("https://www.bilibili.com/video/")
 
 
 def test_read_url_routes_reddit_and_youtube_before_web():

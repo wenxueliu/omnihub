@@ -11,7 +11,7 @@
 
 ```bash
 python -m pytest -q
-# 278 tests
+# 449 tests
 ```
 
 覆盖：schema 与 manifest 契约、目录删除隔离、路由与聚合、模板与解析器、
@@ -39,14 +39,14 @@ cooling/failed 区分、插件信任、冷却账本（查询 / 清除 / pacing�
 
 ```bash
 python -m omnihub.cli doctor --text
-# 14 platform(s), 0 error(s), 1 degraded
+# 15 platform(s), 0 error(s), 1 degraded
 ```
 
 | 平台 | 动作 | 必需适配器 | 可选凭据 / 浏览器 |
 |---|---|---|---|
 | `web` | search, read | http | daemon 可选 |
 | `github` | search, read | builtin, http | `GITHUB_TOKEN`（缺省用公共来源） |
-| `bilibili` | search, read | http | daemon（浏览器登录态，读取字幕；默认写入 `_raw/`） |
+| `bilibili` | search, read | builtin, http | daemon（浏览器登录态，读取字幕；默认写入 `_raw/`）；搜索走公开 WBI API，Exa 兜底 |
 | `v2ex` | search, read | builtin, http | — |
 | `reddit` | search, read | http | daemon 可选 |
 | `youtube` | search, read | http | daemon 可选 |
@@ -55,14 +55,15 @@ python -m omnihub.cli doctor --text
 | `xiaohongshu` | search, read | — | daemon 可选 |
 | `xiaoyuzhou` | search, read | http | daemon 可选 |
 | `linkedin` | search, read | — | daemon 可选 |
+| `wechat` | search, read | http | daemon（移动端微信 UA 读取文章）；搜索优先 Exa，Sogou 浏览器兜底 |
 | `deepwiki` | read | builtin | —（公开 MCP，无凭据） |
 | `notebooklm` | search, read | builtin | `notebooklm` CLI 可选（缺失时 degraded） |
 | `noop` | search, read | builtin | —（离线示例） |
 
 `kimi-webbridge v2.0.23` 在本机运行。`twitter` / `xueqiu` / `xiaohongshu` /
-`linkedin` 的搜索与读取依赖它；daemon 未运行时这些平台在 `doctor` 中为
-`degraded`（来源被 `when: adapter:daemon` 跳过），不会把整体健康检查判为
-失败。`notebooklm` 依赖本机的 `notebooklm` CLI（`pip install notebooklm-py`）；
+`linkedin` 的搜索与读取，以及 `wechat` 的文章读取依赖它；daemon 未运行时这些
+平台在 `doctor` 中为 `degraded`（来源被 `when: adapter:daemon` 跳过），不会
+把整体健康检查判为失败。`notebooklm` 依赖本机的 `notebooklm` CLI（`pip install notebooklm-py`）；
 本机未安装，因此 `doctor` 显示 `degraded`，来源被 `when: tool:notebooklm`
 跳过。`deepwiki` 只走公开 HTTP MCP 端点，不需要登录或凭据。
 
@@ -70,7 +71,7 @@ python -m omnihub.cli doctor --text
 
 ```bash
 python -m omnihub.cli check --timeout 90 --text
-# 23 check(s), 0 failed, 2 skipped
+# 24 check(s), 1 failed, 2 skipped
 ```
 
 | 平台 | 动作 | 实际 backend | 结果 |
@@ -79,12 +80,12 @@ python -m omnihub.cli check --timeout 90 --text
 | web | read | jina | ok |
 | github | search | github-api | ok |
 | github | read | github-api | ok |
-| bilibili | search | exa | ok |
+| bilibili | search | bilibili-api（exa 兜底） | ok |
 | bilibili | read | kimi-browser | ok |
 | v2ex | search | sov2ex | ok |
 | v2ex | read | v2ex-api | ok |
-| reddit | search | exa | ok |
-| reddit | read | exa | ok |
+| reddit | search | — | failed（NEED_LOGIN：浏览器未登录） |
+| reddit | read | kimi-browser | ok |
 | youtube | search | exa | ok |
 | youtube | read | exa | ok |
 | twitter | search | kimi-browser | ok |
@@ -98,10 +99,13 @@ python -m omnihub.cli check --timeout 90 --text
 | linkedin | read | kimi-browser | ok |
 | deepwiki | read | deepwiki-mcp | ok |
 | notebooklm | search | — | skipped（本机未安装 CLI） |
+| wechat | search | exa | ok |
 
 `noop` 不声明 `check`，`notebooklm` 的工具缺失导致来源全部 `SKIP`，二者均
-计入 `skipped` 而不是 `failed`。多数检查耗时 0.1–3s；雪球页面不触发
-`load`，导航固定等待约 30s，因此 `xueqiu` 两项各约 30s。
+计入 `skipped` 而不是 `failed`。本次运行中 `reddit` 搜索因本机浏览器未登录
+返回 `NEED_LOGIN`（本地登录态问题，不是代码回归）；登录后该来源应恢复。
+多数检查耗时 0.1–3s；雪球页面不触发 `load`，导航固定等待约 30s，因此
+`xueqiu` 两项各约 30s。`wechat` 搜索走 Exa，约 0.8s。
 
 ## 4. 功能验收
 

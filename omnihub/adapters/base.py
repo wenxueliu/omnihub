@@ -55,6 +55,9 @@ class ToolCall:
     call: Optional[str] = None
     action: Optional[str] = None
     tool: Optional[str] = None
+    #: Absolute path to a script bundled by the platform. The adapter reads
+    #: it; script text is never templated or sent as a resolved argument.
+    script: Optional[str] = None
     args: Mapping[str, Any] = field(default_factory=dict)
     params: Mapping[str, Any] = field(default_factory=dict)
     argv: Optional[tuple[str, ...]] = None

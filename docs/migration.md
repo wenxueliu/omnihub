@@ -16,7 +16,7 @@ manifest + 共享执行核心”。一个平台就是一个目录：删掉目录
 | 代码里写死的后端顺序 | `sources[].priority`（越小越优先） |
 | channel 内部的超时、重试、冷却 | 共享 `core/policy.py` 与 `core/ratelimit.py` |
 | `channels/__init__.py` 静态列表 | 目录发现（内置 + 插件根） |
-| 解析逻辑散落在 channel 内 | `parse/*.py` 或带夹具的平台 `parse.py` |
+| 解析逻辑散落在 channel 内 | 共享 `parse/*.py`，或平台 `scripts/parse.py` + fixtures |
 | `~/.agent-reach/state.json` | `~/.omnihub/state/rate_limits.json` |
 
 ### 1.2 迁移步骤
@@ -28,13 +28,19 @@ manifest + 共享执行核心”。一个平台就是一个目录：删掉目录
    能用现有 adapter（`http` / `cli` / `opencli` / `daemon` / `builtin`）
    就不要写平台代码。
 4. **搬解析**：通用 JSON/Markdown 走 `parse/*`；平台专用解析放
-   `platforms/<id>/parse.py`（仅内置平台自动受信任）。
-5. **声明检查**：加 `check.search` / `check.read`，让 `omnihub check`
+   `platforms/<id>/scripts/parse.py`，并在 manifest 顶层写
+   `parse_script: scripts/parse.py`。只有脚本需要代码时才建 `scripts/`。
+5. **声明脚本**：builtin 来源写 `script: scripts/<action>.py`，daemon
+   `browse` 来源写 `script: scripts/<action>.js`；不要在 YAML 里内联
+   `args.code`。脚本路径只能是 `scripts/` 下的相对路径。
+6. **写 SKILL.md**：`platforms/<id>/SKILL.md`，`name` 等于平台 id，说明
+   触发场景、命令、参数、来源顺序、脚本与错误码；与 YAML 保持同步。
+7. **声明检查**：加 `check.search` / `check.read`，让 `omnihub check`
    覆盖主路径。
-6. **补测试**：`platforms/<id>/fixtures/` 放真实响应样本，至少一个
+8. **补测试**：`platforms/<id>/fixtures/` 放真实响应样本，至少一个
    search、一个 read；在 `tests/test_platform_contracts.py` 加契约断言。
-7. **验收**：见第 4 节命令。
-8. **删旧代码**：确认新路径工作后删除旧 channel 与静态注册项。
+9. **验收**：见第 4 节命令。
+10. **删旧代码**：确认新路径工作后删除旧 channel 与静态注册项。
 
 ### 1.3 不要直接搬的东西
 
@@ -57,7 +63,8 @@ manifest + 共享执行核心”。一个平台就是一个目录：删掉目录
 
 ## 2. 新增一个平台
 
-最小闭环只需要一个 manifest：
+运行时最小闭环只需要一个 manifest；作为随包平台贡献时，还必须有
+`SKILL.md`（见下文）。
 
 ```yaml
 id: example
@@ -105,6 +112,11 @@ actions:
   `when: adapter:NAME`；条件不满足记为 `SKIP`。
 - URL 参数写 `format: url`，会经过共享 SSRF 策略校验。
 - 需要限速时在来源上加 `min_interval`（秒），核心最多等待 10s。
+- 需要代码时放进 `scripts/` 并用 `script` / `parse_script` 显式引用；
+  路径校验失败会在加载期报 `ManifestError`。
+- 平台目录还需要手写 `SKILL.md`：frontmatter `name` 等于平台 id，
+  `description` 覆盖中英文触发词；正文的动作、参数、脚本路径必须与
+  `platform.yaml` 一致。
 - 草稿阶段可以先不写 `check`；`check --dry-run` 会把它计入 `skipped`。
 
 ## 3. 删除或禁用平台
@@ -133,6 +145,8 @@ python -m omnihub.cli read "<url>" --platform <id> --text
 新平台合入前至少满足：
 
 - [ ] manifest 通过 schema 与跨文件引用校验（`platforms` 无 invalid）
+- [ ] `SKILL.md` 存在，frontmatter `name` 与平台 id 一致，且未与 YAML 漂移
+- [ ] 所有 `script` / `parse_script` 指向存在的 `scripts/` 文件，YAML 无内联 JS
 - [ ] `doctor` 中该平台为 `ok`；缺凭据只应是 `unknown` 而非 error
 - [ ] `check --platform <id>` 的 `search` 与 `read` 均为 `ok`
       （若因冷却被跳过，先按 `retry_after_seconds` 等待，或确认上游恢复后
@@ -166,7 +180,8 @@ facebook、instagram、boss 明确不迁移。
 
 - 用户亲自在连接的浏览器里完成站点登录；本仓库不接收密码或 Cookie。
 - 站点 JS 只从已加载页面读取查询词（`location` / `URLSearchParams`），
-  manifest 不把 `${query}` 插值进 `code`，避免脚本注入。
+  manifest 不把 `${query}` 插值进脚本，脚本文件保存在
+  `scripts/*.js` 且由适配器原样加载，避免脚本注入。
 - 登录重定向用 `login_url` 或 `{login:true}` 标记；验证码/风控返回
   `{blocked:true}`；两者分别映射 `NEED_LOGIN` / `PLATFORM_BLOCKED`。
 - 用 `explain` 确认来源顺序，并让 `check --platform <id>` 的 search/read

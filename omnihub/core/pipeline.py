@@ -14,6 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from omnihub.adapters.base import RawResult, ToolCall
@@ -32,6 +33,7 @@ from omnihub.core.result import (
 )
 from omnihub.core.registry import Action, PlatformManifest, Registry, Source
 from omnihub.core.router import Plan, RoutingError, build_plan
+from omnihub.core.scripts import first_existing, resolve_script_path
 from omnihub.core.template import resolve_argv, resolve_templates
 from omnihub.parse.generic import parse_with_chain
 
@@ -129,10 +131,14 @@ def prepare_params(
 
 
 def load_platform_module(platform: PlatformManifest, filename: str) -> Optional[Any]:
-    """Load a trusted platform module, or return None."""
+    """Load a trusted platform module by name, or return None."""
+    return load_platform_module_path(platform, platform.path.parent / filename)
+
+
+def load_platform_module_path(platform: PlatformManifest, path: Path) -> Optional[Any]:
+    """Load a trusted platform module from an explicit path, or return None."""
     if not platform.trusted:
         return None
-    path = platform.path.parent / filename
     if not path.is_file():
         return None
     stat = path.stat()
@@ -153,8 +159,16 @@ def load_platform_module(platform: PlatformManifest, filename: str) -> Optional[
 
 
 def _custom_parsers(platform: PlatformManifest) -> dict[str, Any]:
+    directory = platform.path.parent
+    candidates = []
+    if platform.parse_script:
+        candidates.append(platform.parse_script)
+    candidates.extend(["scripts/parse.py", "parse.py"])
+    path = first_existing(directory, candidates)
+    if path is None:
+        return {}
     try:
-        module = load_platform_module(platform, "parse.py")
+        module = load_platform_module_path(platform, path)
     except OmniHubError:
         raise
     except Exception as exc:
@@ -176,11 +190,23 @@ def _build_call(
     ctx: Any,
 ) -> ToolCall:
     raw = dict(source.raw)
+    script_path: Optional[Path] = None
+    if source.script:
+        script_path = resolve_script_path(platform.path.parent, source.script)
+    elif source.adapter == "builtin":
+        # Legacy plugins relied on the action-name convention. Built-in
+        # platforms declare ``script`` explicitly, but the fallback keeps
+        # third-party manifests running unchanged.
+        script_path = first_existing(
+            platform.path.parent,
+            [f"scripts/{action_name}.py", f"{action_name}.py"],
+        )
     return ToolCall(
         adapter=source.adapter,
         call=source.call,
         action=action_name,
         tool=source.tool,
+        script=str(script_path) if script_path else None,
         args=dict(resolve_templates(dict(source.args), params, ctx) or {}),
         params=dict(params),
         argv=resolve_argv(raw.get("argv"), params, ctx),

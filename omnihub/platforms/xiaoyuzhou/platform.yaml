@@ -132,6 +132,7 @@ actions:
       - adapter: builtin
         name: whisper
         call: transcribe
+        script: scripts/transcribe.py
         tool: ffmpeg
         priority: 10
         timeout: 300

@@ -1,6 +1,6 @@
 id: bilibili
-description: Bilibili video search and subtitle reads through the user's logged-in browser.
-version: 2
+description: Bilibili video search through the public API and subtitle reads through the user's logged-in browser.
+version: 3
 level: default
 priority: 110
 capabilities: [http, browser]
@@ -16,7 +16,9 @@ domains:
   - b23.tv
 
 requires:
-  adapters: [http]
+  adapters: [http, builtin]
+
+parse_script: scripts/parse.py
 
 actions:
   search:
@@ -32,6 +34,13 @@ actions:
         maximum: 20
         description: Maximum number of results.
     sources:
+      - adapter: builtin
+        name: bilibili-api
+        call: search
+        script: scripts/search.py
+        priority: 5
+        timeout: 20
+        min_interval: 2
       - adapter: http
         name: exa
         method: POST
@@ -66,133 +75,12 @@ actions:
         name: kimi-browser
         when: adapter:daemon
         call: browse
+        script: scripts/read.js
         args:
           url: "${target}"
           wait_ms: 10000
           new_tab: false
           group_title: "omnihub: bilibili subtitles"
-          code: |
-            (async () => {
-              let loggedIn = false;
-              try {
-                const nav = await fetch(
-                  'https://api.bilibili.com/x/web-interface/nav',
-                  {credentials: 'include'}
-                ).then(response => response.json());
-                loggedIn = !!(nav.data && nav.data.isLogin);
-              } catch (error) {
-                return JSON.stringify({error: 'cannot verify the Bilibili login: ' + error});
-              }
-              if (!loggedIn) {
-                return JSON.stringify({
-                  login: true,
-                  message: 'Bilibili subtitle reads need a logged-in browser session'
-                });
-              }
-
-              const state = window.__INITIAL_STATE__ || {};
-              const video = state.videoData || {};
-              let cid = video.cid || null;
-              let bvid = video.bvid || null;
-              let title = video.title || null;
-              let owner = video.owner && video.owner.name ? video.owner.name : null;
-              let pubdate = video.pubdate || null;
-              let duration = video.duration || null;
-
-              if (!cid) {
-                const match = (location.pathname || '').match(/\/video\/(BV[0-9A-Za-z]{10})/);
-                bvid = bvid || (match ? match[1] : null);
-                if (!bvid) {
-                  return JSON.stringify({
-                    not_found: true,
-                    message: 'not a Bilibili video page'
-                  });
-                }
-                const view = await fetch(
-                  'https://api.bilibili.com/x/web-interface/view?bvid=' + bvid,
-                  {credentials: 'include'}
-                ).then(response => response.json());
-                if (view.code === -404) {
-                  return JSON.stringify({
-                    not_found: true,
-                    message: 'Bilibili video ' + bvid + ' does not exist'
-                  });
-                }
-                if (view.code !== 0 || !view.data) {
-                  return JSON.stringify({
-                    error: 'Bilibili view API ' + view.code + ': ' + (view.message || 'unknown error')
-                  });
-                }
-                cid = view.data.cid;
-                bvid = view.data.bvid || bvid;
-                title = view.data.title || title;
-                owner = view.data.owner ? view.data.owner.name : owner;
-                pubdate = view.data.pubdate || pubdate;
-                duration = view.data.duration || duration;
-              }
-              if (!cid) {
-                return JSON.stringify({
-                  not_found: true,
-                  message: 'cannot resolve the video cid'
-                });
-              }
-
-              // player/v2 is answered from a cache pool that hands back a
-              // different slice of the track list on every call. The slice
-              // mixes in AI tracks of unrelated videos, and the video's own
-              // track only shows up in some responses, so sample the endpoint
-              // in parallel and keep every unique track. The parser then
-              // picks the track whose cues cover the video duration.
-              const requests = [];
-              for (let attempt = 0; attempt < 10; attempt++) {
-                requests.push(
-                  fetch(
-                    'https://api.bilibili.com/x/player/v2?cid=' + cid +
-                      '&bvid=' + bvid + '&t=' + (Date.now() + attempt),
-                    {credentials: 'include'}
-                  )
-                    .then(response => response.json())
-                    .then(info => {
-                      if (info.code !== 0 || !info.data || !info.data.subtitle) {
-                        return [];
-                      }
-                      return info.data.subtitle.subtitles || [];
-                    })
-                    .catch(() => [])
-                );
-              }
-              const batches = await Promise.all(requests);
-
-              const seen = {};
-              const tracks = [];
-              let listed = 0;
-              for (const batch of batches) {
-                listed = Math.max(listed, batch.length);
-                for (const track of batch) {
-                  if (!track.subtitle_url) continue;
-                  const id = String(track.id_str || track.subtitle_url);
-                  if (seen[id]) continue;
-                  seen[id] = true;
-                  tracks.push(track);
-                }
-              }
-
-              return JSON.stringify({
-                title: title,
-                owner: owner,
-                pubdate: pubdate,
-                duration: duration,
-                bvid: bvid,
-                cid: cid,
-                page: location.href,
-                track_count: Math.max(listed, tracks.length),
-                subtitles: tracks.map(track => ({
-                  lan: track.lan,
-                  lan_doc: track.lan_doc,
-                  url: track.subtitle_url
-                }))
-              });
-            })()
         parse:
           - subtitles
         priority: 10

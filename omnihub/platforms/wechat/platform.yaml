@@ -1,0 +1,111 @@
+id: wechat
+description: WeChat Official Account article search through Exa and Sogou, and article reads through the logged-in browser.
+version: 1
+level: optional
+priority: 220
+capabilities: [http, browser]
+
+check:
+  # Article URLs are publisher-specific and can be deleted at any time, so a
+  # static read check would fail for reasons unrelated to the platform.
+  search: {query: "人工智能", limit: 2}
+
+domains:
+  - mp.weixin.qq.com
+  - weixin.sogou.com
+
+requires:
+  adapters: [http]
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Keywords to search WeChat Official Account articles for.
+      limit:
+        type: int
+        default: 5
+        minimum: 1
+        maximum: 20
+        description: Maximum number of articles.
+    sources:
+      # Exa returns direct mp.weixin.qq.com URLs, so `read` can consume them
+      # without a second redirect. It is also the faster source: Sogou's page
+      # load regularly exceeds the daemon's 30s navigation cap.
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_search_exa
+            arguments:
+              query: "site:mp.weixin.qq.com ${query}"
+              objective: "${query}"
+              numResults: "${limit}"
+        parse:
+          - exa_search
+        priority: 5
+        timeout: 30
+      # Browser fallback: Sogou's WeChat index, driven through the logged-in
+      # browser. Result links are Sogou redirects that only resolve in the
+      # browser session that ran the search.
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        script: scripts/search.js
+        args:
+          url: "https://weixin.sogou.com/weixin?type=2&query=${query|urlencode}"
+          wait_for: "ul.news-list li"
+          wait_ms: 15000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: wechat search"
+        parse:
+          - json_items
+        priority: 20
+        timeout: 60
+        min_interval: 2
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: WeChat article URL (mp.weixin.qq.com, or a Sogou result redirect).
+    sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        script: scripts/read.js
+        args:
+          url: "${target}"
+          wait_for: "#js_content"
+          wait_ms: 15000
+          limit: 1
+          new_tab: false
+          group_title: "omnihub: wechat read"
+          # WeChat serves "环境异常" to desktop/automation user agents and
+          # renders the article for a mobile WeChat client. The daemon opens a
+          # lightweight tab, applies this override through CDP, and only then
+          # loads the article URL.
+          user_agent:
+            userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.44(0x18002c2f) NetType/WIFI Language/zh_CN"
+            acceptLanguage: "zh-CN,zh;q=0.9"
+            platform: iPhone
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 2

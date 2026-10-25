@@ -61,7 +61,15 @@ class BuiltinAdapter:
         if not call.call:
             raise OmniHubError(NEED_SETUP, "builtin source requires a call")
 
-        module_path = Path(platform_path) / f"{call.action or 'action'}.py"
+        if call.script:
+            module_path = Path(call.script)
+            if module_path.suffix != ".py":
+                raise OmniHubError(
+                    NEED_SETUP,
+                    f"builtin script must be a .py file: {module_path.name}",
+                )
+        else:
+            module_path = Path(platform_path) / f"{call.action or 'action'}.py"
         if not module_path.is_file():
             raise OmniHubError(NEED_SETUP, f"platform has no {module_path.name}")
         try:

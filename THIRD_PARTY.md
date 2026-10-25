@@ -33,9 +33,9 @@ M2 adaptations:
 
 | Target | Source | Changes |
 |---|---|---|
-| `omnihub/platforms/github/parse.py`, `read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
-| `omnihub/platforms/v2ex/parse.py`, `read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
-| `omnihub/platforms/bilibili/parse.py` | `agent_reach/channels/bilibili.py` | kept the AI/CC subtitle item shape (title, author, publish time, cue text) and Bilibili API error mapping. The `bili-cli` transport is gone: the browser source resolves `cid` and the signed subtitle URL, and the parser downloads the JSON through `ctx.http` with a Bilibili Referer. No cookie store or `BILIBILI_COOKIE` |
+| `omnihub/platforms/github/scripts/parse.py`, `scripts/read.py` | `agent_reach/channels/github.py` | kept the repository-search path, target parsing, raw README accept header, issue/PR comments and metadata fields. Replaced the `gh` backend with manifest HTTP sources; token only from `GH_TOKEN` / `GITHUB_TOKEN` via `ctx.secret` (no config-file fallback); URL-encoded owner/repo; all size/timeout limits come from `Context` |
+| `omnihub/platforms/v2ex/scripts/parse.py`, `scripts/read.py` | `agent_reach/channels/v2ex.py` | kept topic-id parsing, `topics/show.json` + `replies/show.json`, `unix_to_iso` and node/member metadata. Search is new (SOV2EX, since the public API has no search); transport goes through `Context.http` instead of urllib plus a curl fallback |
+| `omnihub/platforms/bilibili/scripts/parse.py` | `agent_reach/channels/bilibili.py` | kept the AI/CC subtitle item shape (title, author, publish time, cue text) and Bilibili API error mapping. The `bili-cli` transport is gone: the browser source resolves `cid` and the signed subtitle URL, and the parser downloads the JSON through `ctx.http` with a Bilibili Referer. No cookie store or `BILIBILI_COOKIE` |
 
 No upstream copyright notices were removed.
 

@@ -202,3 +202,71 @@ def test_builtin_adapter_refuses_plugin_python(tmp_path):
             ctx=Context(timeout=5),
         )
     assert info.value.code == NEED_SETUP
+
+
+def _builtin_search_call(tmp_path, **overrides):
+    call = ToolCall(
+        adapter="builtin",
+        call="search",
+        action="search",
+        params={"query": "x", "limit": 1},
+        raw={
+            "platform_origin": "builtin",
+            "platform_path": str(tmp_path),
+            "platform_id": "demo",
+        },
+    )
+    return ToolCall(**{**call.__dict__, **overrides})
+
+
+def test_builtin_adapter_uses_an_explicit_script(tmp_path):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "search.py").write_text(
+        "def search(query, *, limit, params, ctx):\n"
+        "    return [{'title': query, 'limit': limit}]\n",
+        encoding="utf-8",
+    )
+
+    result = BuiltinAdapter().invoke(
+        _builtin_search_call(tmp_path, script=str(scripts / "search.py")),
+        ctx=Context(timeout=5),
+    )
+
+    assert result.data == [{"title": "x", "limit": 1}]
+
+
+def test_builtin_adapter_falls_back_to_a_root_action_module(tmp_path):
+    (tmp_path / "search.py").write_text(
+        "def search(query, *, limit, params, ctx):\n"
+        "    return [{'title': query}]\n",
+        encoding="utf-8",
+    )
+
+    result = BuiltinAdapter().invoke(
+        _builtin_search_call(tmp_path), ctx=Context(timeout=5)
+    )
+    assert result.data == [{"title": "x"}]
+
+
+def test_builtin_adapter_reports_a_missing_script(tmp_path):
+    with pytest.raises(OmniHubError) as info:
+        BuiltinAdapter().invoke(
+            _builtin_search_call(tmp_path, script=str(tmp_path / "scripts" / "search.py")),
+            ctx=Context(timeout=5),
+        )
+    assert info.value.code == NEED_SETUP
+    assert "has no search.py" in info.value.message
+
+
+def test_builtin_adapter_requires_a_python_script(tmp_path):
+    script = tmp_path / "search.js"
+    script.write_text("return [];\n", encoding="utf-8")
+
+    with pytest.raises(OmniHubError) as info:
+        BuiltinAdapter().invoke(
+            _builtin_search_call(tmp_path, script=str(script)),
+            ctx=Context(timeout=5),
+        )
+    assert info.value.code == NEED_SETUP
+    assert "must be a .py file" in info.value.message

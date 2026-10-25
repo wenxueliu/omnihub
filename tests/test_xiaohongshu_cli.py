@@ -9,8 +9,8 @@ from typing import Any, Callable
 
 import pytest
 
-from omnihub.platforms.xiaohongshu import xiaohongshu_cli as xhs
-from omnihub.platforms.xiaohongshu.xiaohongshu_cli import (
+from omnihub.platforms.xiaohongshu.scripts import xiaohongshu_cli as xhs
+from omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli import (
     CliError,
     DaemonClient,
     TokenCache,

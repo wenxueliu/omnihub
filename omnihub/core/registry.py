@@ -19,6 +19,12 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from omnihub.adapters.base import ADAPTER_KINDS
+from omnihub.core.scripts import (
+    SCRIPT_DIR,
+    SCRIPT_SUFFIXES,
+    ScriptPathError,
+    resolve_script_path,
+)
 from omnihub.utils.url import host_matches
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent
@@ -55,6 +61,7 @@ class Source:
     name: Optional[str] = None
     tool: Optional[str] = None
     call: Optional[str] = None
+    script: Optional[str] = None
     args: Mapping[str, Any] = field(default_factory=dict)
     url: Optional[str] = None
     site: Optional[str] = None
@@ -101,6 +108,7 @@ class PlatformManifest:
     path: Path = Path()
     origin: str = "unknown"
     trusted: bool = False
+    parse_script: Optional[str] = None
     manifest: Mapping[str, Any] = field(default_factory=dict)
 
     def supports(self, action: Optional[str]) -> bool:
@@ -108,8 +116,56 @@ class PlatformManifest:
 
     @property
     def code_hooks(self) -> tuple[str, ...]:
-        directory = self.path.parent
-        return tuple(name for name in CODE_HOOKS if (directory / name).is_file())
+        return code_hooks_in(self.path.parent, self.manifest)
+
+
+def _declared_scripts(manifest: Optional[Mapping[str, Any]]) -> list[str]:
+    """Script paths declared by a manifest, in document order."""
+    if not manifest:
+        return []
+    found: list[str] = []
+    parse_script = manifest.get("parse_script")
+    if isinstance(parse_script, str):
+        found.append(parse_script)
+    for action in (manifest.get("actions") or {}).values():
+        for source in action.get("sources") or ():
+            script = source.get("script")
+            if isinstance(script, str):
+                found.append(script)
+    return found
+
+
+def code_hooks_in(
+    directory: Path | str, manifest: Optional[Mapping[str, Any]] = None
+) -> tuple[str, ...]:
+    """Executable files shipped by a platform directory.
+
+    Legacy root-level hooks come first (kept for third-party compatibility),
+    then declared scripts, then anything else under ``scripts/``. Relative
+    POSIX paths make the result deterministic in catalogs and plugin reports.
+    """
+    base = Path(directory)
+    found: list[str] = []
+
+    def add(relative: str) -> None:
+        if relative not in found:
+            found.append(relative)
+
+    for name in CODE_HOOKS:
+        if (base / name).is_file():
+            add(name)
+    for declared in _declared_scripts(manifest):
+        add(declared)
+    scripts_dir = base / SCRIPT_DIR
+    if scripts_dir.is_dir():
+        for path in sorted(scripts_dir.rglob("*")):
+            if (
+                path.is_file()
+                and path.suffix in SCRIPT_SUFFIXES
+                and "__pycache__" not in path.parts
+            ):
+                add(path.relative_to(base).as_posix())
+    return tuple(found)
 
 
 @dataclass
@@ -165,6 +221,7 @@ def _parse_source(data: Mapping[str, Any]) -> Source:
         name=data.get("name"),
         tool=data.get("tool"),
         call=data.get("call"),
+        script=data.get("script"),
         args=dict(data.get("args") or {}),
         url=data.get("url"),
         site=data.get("site"),
@@ -216,6 +273,7 @@ def _parse_platform(data: Mapping[str, Any], manifest_path: Path, origin: str) -
         actions=actions,
         path=manifest_path,
         origin=origin,
+        parse_script=data.get("parse_script"),
         manifest=dict(data),
     )
 
@@ -237,6 +295,64 @@ def _check_references(data: Mapping[str, Any], manifest_path: Path) -> None:
             )
 
 
+def _validate_script(
+    value: Any,
+    manifest_path: Path,
+    location: str,
+    suffixes: tuple[str, ...],
+) -> None:
+    """Validate one declared script path and require the file to exist."""
+    try:
+        path = resolve_script_path(manifest_path.parent, str(value), must_exist=False)
+    except ScriptPathError as exc:
+        raise ManifestError(manifest_path, f"{location}: {exc}") from None
+    if path.suffix not in suffixes:
+        raise ManifestError(
+            manifest_path,
+            f"{location}: script must end in {', '.join(suffixes)}",
+        )
+    if not path.is_file():
+        raise ManifestError(manifest_path, f"{location}: script not found: {value}")
+
+
+def _check_scripts(data: Mapping[str, Any], manifest_path: Path) -> None:
+    """Resolve every declared script at load time.
+
+    A missing or escaping path is a manifest error, so ``platforms``,
+    ``explain``, ``plugin validate`` and ``doctor`` all surface it before an
+    action runs. Only ``builtin`` Python modules and ``daemon`` browse
+    JavaScript may be referenced.
+    """
+    parse_script = data.get("parse_script")
+    if parse_script is not None:
+        _validate_script(parse_script, manifest_path, "parse_script", (".py",))
+
+    for action_name, action_data in (data.get("actions") or {}).items():
+        for index, source in enumerate(action_data.get("sources") or ()):
+            script = source.get("script")
+            if script is None:
+                continue
+            location = f"actions.{action_name}.sources[{index}].script"
+            adapter = source.get("adapter")
+            call = source.get("call")
+            if adapter == "builtin":
+                suffixes = (".py",)
+            elif adapter == "daemon" and call == "browse":
+                suffixes = (".js",)
+            else:
+                raise ManifestError(
+                    manifest_path,
+                    f"{location}: script is only supported by builtin sources "
+                    "or daemon browse sources",
+                )
+            if (source.get("args") or {}).get("code") is not None:
+                raise ManifestError(
+                    manifest_path,
+                    f"{location}: a source cannot declare both script and args.code",
+                )
+            _validate_script(script, manifest_path, location, suffixes)
+
+
 def _check_code_hooks(
     data: Mapping[str, Any], manifest_path: Path, origin: str
 ) -> None:
@@ -249,7 +365,7 @@ def _check_code_hooks(
     """
     if origin != "plugin":
         return
-    hooks = [name for name in CODE_HOOKS if (manifest_path.parent / name).is_file()]
+    hooks = list(code_hooks_in(manifest_path.parent, data))
     if hooks and "capabilities" not in data:
         raise ManifestError(
             manifest_path,
@@ -296,6 +412,7 @@ def load_platform(path: Path | str, *, origin: str = "unknown") -> PlatformManif
         )
 
     _check_references(data, manifest_path)
+    _check_scripts(data, manifest_path)
     _check_code_hooks(data, manifest_path, origin)
     return _parse_platform(data, manifest_path, origin)
 
@@ -459,6 +576,7 @@ def _catalog_entry(platform: PlatformManifest) -> dict:
         "requires": dict(platform.requires),
         "origin": platform.origin,
         "trusted": platform.trusted,
+        "parse_script": platform.parse_script,
         "code_hooks": list(platform.code_hooks),
         "actions": {
             name: {
@@ -471,6 +589,7 @@ def _catalog_entry(platform: PlatformManifest) -> dict:
                         "name": source.name,
                         "tool": source.tool,
                         "call": source.call,
+                        "script": source.script,
                         "priority": source.priority,
                         "parse": list(source.parse),
                         "when": source.when,

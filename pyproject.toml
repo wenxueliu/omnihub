@@ -21,7 +21,7 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 omnihub = "omnihub.cli:main"
-xiaohongshu-cli = "omnihub.platforms.xiaohongshu.xiaohongshu_cli:main"
+xiaohongshu-cli = "omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["omnihub"]

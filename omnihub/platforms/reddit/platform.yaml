@@ -3,7 +3,7 @@ description: Reddit post search and public thread reads through Exa and the brow
 version: 1
 level: default
 priority: 130
-capabilities: []
+capabilities: [http, browser]
 
 check:
   search: {query: "asyncio", limit: 1}
@@ -33,6 +33,25 @@ actions:
         maximum: 20
         description: Maximum number of results.
     sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: browse
+        script: scripts/search.js
+        args:
+          url: "https://www.reddit.com/search/?q=${query|urlencode}&limit=${limit}&type=link&sort=relevance"
+          wait_for: "body"
+          wait_ms: 10000
+          limit: "${limit}"
+          new_tab: false
+          group_title: "omnihub: reddit search"
+          login_url:
+            - "/login"
+        parse:
+          - json_items
+        priority: 10
+        timeout: 60
+        min_interval: 3
       - adapter: http
         name: exa
         method: POST
@@ -52,7 +71,7 @@ actions:
               numResults: "${limit}"
         parse:
           - exa_search
-        priority: 10
+        priority: 20
         timeout: 30
 
   read:
@@ -63,6 +82,19 @@ actions:
         required: true
         description: Reddit post URL (redd.it short links are accepted).
     sources:
+      - adapter: daemon
+        name: kimi-browser
+        when: adapter:daemon
+        call: read
+        args:
+          url: "${target}"
+          max_chars: 20000
+          group_title: "omnihub: reddit read"
+        parse:
+          - daemon_page
+        priority: 10
+        timeout: 45
+        min_interval: 3
       - adapter: http
         name: exa
         method: POST
@@ -82,17 +114,5 @@ actions:
               maxCharacters: 20000
         parse:
           - exa_read
-        priority: 10
-        timeout: 45
-      - adapter: daemon
-        name: kimi-browser
-        when: adapter:daemon
-        call: read
-        args:
-          url: "${target}"
-          max_chars: 20000
-          group_title: "omnihub: reddit read"
-        parse:
-          - daemon_page
         priority: 20
         timeout: 45

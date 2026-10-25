@@ -58,12 +58,33 @@ _POLL_SECONDS = 0.25
 _MAX_CODE_CHARS = 100_000
 _DEFAULT_LIMIT = 20
 _MAX_LIMIT = 50
+#: Fixed, public page used to give a CDP user-agent override a tab to attach
+#: to before the real target loads. Never derived from user input.
+_WARMUP_URL = "https://example.com/"
 
 #: Actions that open/attach a browser tab and must clean up after themselves.
 _TAB_ACTIONS = frozenset({"read", "browse"})
 #: Closing a tab is maintenance, not part of the query; never inherit the
 #: action's (possibly long) timeout.
 _CLOSE_TIMEOUT = 5.0
+
+
+def _load_script_code(path: Path) -> str:
+    """Read a bundled page script once; never template or rewrite it."""
+    try:
+        code = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise OmniHubError(
+            NEED_SETUP, f"cannot read bundled script {path}: {exc}"
+        ) from None
+    if not code.strip():
+        raise OmniHubError(NEED_SETUP, f"bundled script is empty: {path}")
+    if len(code) > _MAX_CODE_CHARS:
+        raise OmniHubError(
+            NEED_SETUP,
+            f"bundled script exceeds {_MAX_CODE_CHARS} characters: {path}",
+        )
+    return code
 
 
 class ExpiredCursor(OmniHubError):
@@ -571,13 +592,31 @@ class DaemonAdapter:
         from omnihub.core.policy import ensure_public_url
 
         target = ensure_public_url(str(target))
-        code = args.pop("code", None)
-        if not isinstance(code, str) or not code.strip():
-            raise OmniHubError(BAD_INPUT, "daemon browse requires a non-empty code argument")
-        if len(code) > _MAX_CODE_CHARS:
-            raise OmniHubError(
-                BAD_INPUT, f"daemon browse code exceeds {_MAX_CODE_CHARS} characters"
-            )
+        declared_code = args.pop("code", None)
+        if call.script:
+            if declared_code is not None:
+                raise OmniHubError(
+                    BAD_INPUT,
+                    "daemon browse cannot declare both script and args.code",
+                )
+            script_path = Path(call.script)
+            if script_path.suffix != ".js":
+                raise OmniHubError(
+                    NEED_SETUP,
+                    f"daemon browse script must be a .js file: {script_path.name}",
+                )
+            code = _load_script_code(script_path)
+        else:
+            code = declared_code
+            if not isinstance(code, str) or not code.strip():
+                raise OmniHubError(
+                    BAD_INPUT, "daemon browse requires a non-empty code argument"
+                )
+            if len(code) > _MAX_CODE_CHARS:
+                raise OmniHubError(
+                    BAD_INPUT,
+                    f"daemon browse code exceeds {_MAX_CODE_CHARS} characters",
+                )
         wait_for = args.pop("wait_for", None)
         if wait_for is not None and not str(wait_for).strip():
             wait_for = None
@@ -596,53 +635,72 @@ class DaemonAdapter:
         new_tab = _as_bool(args.pop("new_tab", False))
         group_title = args.pop("group_title", None)
         login_markers = _string_list(args.pop("login_url", None))
-
-        navigate_args: dict[str, Any] = {"url": target, "newTab": new_tab}
-        if group_title:
-            navigate_args["group_title"] = str(group_title)
-        navigation: Any = {}
-        nav_timed_out = False
-        nav_recovered = False
-        nav_error: Optional[OmniHubError] = None
-        try:
-            navigation = self._command(
-                base,
-                "navigate",
-                navigate_args,
-                session,
-                ctx,
-                timeout=timeout,
-                max_bytes=max_bytes,
+        user_agent = args.pop("user_agent", None)
+        if user_agent is not None and not (
+            isinstance(user_agent, Mapping)
+            and user_agent
+            and all(
+                isinstance(key, str) and isinstance(value, str)
+                for key, value in user_agent.items()
             )
-        except OmniHubError as exc:
-            # Client-rendered sites often keep a connection open and never fire
-            # the load event. The page can still be usable, so let the selector
-            # wait and the site JavaScript decide instead of failing here.
-            if exc.code != TIMEOUT:
-                raise
-            nav_timed_out = True
-            nav_error = exc
-
-        if nav_timed_out:
-            # A failed load event can still leave a usable tab behind, but the
-            # daemon does not attach it to the session. Find the tab that the
-            # navigation created (its group title is the most reliable marker)
-            # and attach it so evaluate/snapshot have a target.
-            recovered = self._recover_tab(
-                base,
-                session,
-                target,
-                group_title,
-                ctx,
-                timeout=timeout,
-                max_bytes=max_bytes,
+        ):
+            raise OmniHubError(
+                BAD_INPUT, "user_agent must be a non-empty object of string values"
             )
-            if recovered is None:
-                raise nav_error or OmniHubError(
-                    UPSTREAM_BROKEN, "kimi-webbridge navigation did not produce a usable tab"
+
+        ua_override_failed = False
+        target_new_tab = new_tab
+        if user_agent is not None:
+            # Some sites only serve their content to a different user agent
+            # (WeChat's article pages are the motivating case). CDP can only
+            # override an existing tab, so open a lightweight tab first, apply
+            # the override, then load the target in it. A daemon without CDP
+            # support keeps the normal navigation path instead of failing.
+            if new_tab or not self._session_has_tab(
+                base, session, ctx, timeout=timeout, max_bytes=max_bytes
+            ):
+                warm_args: dict[str, Any] = {"url": _WARMUP_URL, "newTab": True}
+                if group_title:
+                    warm_args["group_title"] = str(group_title)
+                try:
+                    self._command(
+                        base,
+                        "navigate",
+                        warm_args,
+                        session,
+                        ctx,
+                        timeout=timeout,
+                        max_bytes=max_bytes,
+                    )
+                except OmniHubError:
+                    pass
+            try:
+                self._command(
+                    base,
+                    "cdp",
+                    {
+                        "method": "Emulation.setUserAgentOverride",
+                        "params": dict(user_agent),
+                    },
+                    session,
+                    ctx,
+                    timeout=timeout,
+                    max_bytes=max_bytes,
                 )
-            navigation = recovered
-            nav_recovered = True
+                target_new_tab = False
+            except OmniHubError:
+                ua_override_failed = True
+
+        navigation, nav_timed_out, nav_recovered = self._navigate_and_recover(
+            base,
+            session,
+            target,
+            group_title,
+            ctx,
+            new_tab=target_new_tab,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
 
         page_info = self._command(
             base,
@@ -721,8 +779,128 @@ class DaemonAdapter:
             "wait_timed_out": waited_out,
             "nav_timed_out": nav_timed_out,
             "nav_recovered": nav_recovered,
+            "ua_override_failed": ua_override_failed,
         }
         return value, meta
+
+    def _navigate_and_recover(
+        self,
+        base: str,
+        session: str,
+        target: str,
+        group_title: Any,
+        ctx: Any,
+        *,
+        new_tab: bool,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> tuple[Any, bool, bool]:
+        """Navigate, recovering the tab when the page's load event times out.
+
+        Client-rendered sites often keep a connection open and never fire the
+        load event. The page can still be usable, so the caller gets the
+        recovered tab instead of a hard failure.
+        """
+        navigate_args: dict[str, Any] = {"url": target, "newTab": new_tab}
+        if group_title:
+            navigate_args["group_title"] = str(group_title)
+        # Some daemon builds do not report a tab's group title, so ownership
+        # cannot be proven from ``groupTitle`` alone. Snapshot the tabs that
+        # existed before we navigated; a tab that appears afterwards and
+        # matches the target is the one this call opened.
+        known_tab_ids = self._tab_ids(
+            base, session, ctx, timeout=timeout, max_bytes=max_bytes
+        )
+        try:
+            navigation = self._command(
+                base,
+                "navigate",
+                navigate_args,
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+            return navigation, False, False
+        except OmniHubError as exc:
+            if exc.code != TIMEOUT:
+                raise
+
+        recovered = self._recover_tab(
+            base,
+            session,
+            target,
+            group_title,
+            ctx,
+            known_tab_ids=known_tab_ids,
+            timeout=timeout,
+            max_bytes=max_bytes,
+        )
+        if recovered is None:
+            raise OmniHubError(
+                TIMEOUT,
+                "kimi-webbridge navigation timed out and did not produce a usable tab",
+            ) from None
+        return recovered, True, True
+
+    def _session_has_tab(
+        self,
+        base: str,
+        session: str,
+        ctx: Any,
+        *,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> bool:
+        """Whether the session already owns a tab we can attach CDP to."""
+        try:
+            data = self._command(
+                base,
+                "list_tabs",
+                {},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except OmniHubError:
+            return False
+        tabs = data.get("tabs") if isinstance(data, Mapping) else None
+        return isinstance(tabs, list) and bool(tabs)
+
+    def _tab_ids(
+        self,
+        base: str,
+        session: str,
+        ctx: Any,
+        *,
+        timeout: Optional[float] = None,
+        max_bytes: Optional[int] = None,
+    ) -> Optional[frozenset[int]]:
+        """Best-effort snapshot of the browser's current tab ids."""
+        try:
+            data = self._command(
+                base,
+                "list_browser_tabs",
+                {},
+                session,
+                ctx,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            )
+        except OmniHubError:
+            return None
+        tabs = data.get("tabs") if isinstance(data, Mapping) else None
+        if not isinstance(tabs, list):
+            return None
+        ids = set()
+        for tab in tabs:
+            if isinstance(tab, Mapping) and tab.get("tabId") is not None:
+                try:
+                    ids.add(int(tab["tabId"]))
+                except (TypeError, ValueError):
+                    continue
+        return frozenset(ids)
 
     def _recover_tab(
         self,
@@ -732,6 +910,7 @@ class DaemonAdapter:
         group_title: Any,
         ctx: Any,
         *,
+        known_tab_ids: Optional[frozenset[int]] = None,
         timeout: Optional[float] = None,
         max_bytes: Optional[int] = None,
     ) -> Optional[Mapping[str, Any]]:
@@ -813,7 +992,28 @@ class DaemonAdapter:
             and (_page_key(str(tab.get("url") or "")) or ("", ""))[0] == wanted_host
             and str(tab.get("groupTitle") or "").startswith("omnihub:")
         ]
-        pool = tagged or same_page_owned or same_host_owned
+        # Tabs that did not exist before this navigation started. This is the
+        # ownership signal available when the daemon omits group titles; a
+        # user tab with the same URL was in the snapshot and is excluded.
+        newer = []
+        if known_tab_ids is not None:
+            for tab in candidates:
+                try:
+                    tab_id = int(tab["tabId"])
+                except (TypeError, ValueError):
+                    continue
+                if tab_id not in known_tab_ids:
+                    newer.append(tab)
+        matched_new = [
+            tab for tab in newer if _page_key(str(tab.get("url") or "")) == wanted
+        ]
+        if not matched_new and wanted_host:
+            matched_new = [
+                tab
+                for tab in newer
+                if (_page_key(str(tab.get("url") or "")) or ("", ""))[0] == wanted_host
+            ]
+        pool = tagged or same_page_owned or same_host_owned or matched_new
         if not pool:
             return None
         chosen = max(pool, key=lambda tab: int(tab.get("tabId") or 0))

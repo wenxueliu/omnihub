@@ -18,6 +18,8 @@ domains:
 requires:
   adapters: [http, builtin]
 
+parse_script: scripts/parse.py
+
 actions:
   search:
     params:
@@ -74,6 +76,7 @@ actions:
       - adapter: builtin
         name: v2ex-api
         call: read_topic
+        script: scripts/read.py
         parse:
           - json_items
         priority: 10

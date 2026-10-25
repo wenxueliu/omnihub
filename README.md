@@ -13,7 +13,8 @@ M2 平台批次一（`github`、`v2ex`、`bilibili`）+ M3 有状态工具与按
 `youtube`）+ M5 平台自声明的 `check` live 回归与统一限流/冷却 + 平台批次三
 （`twitter`、`xueqiu`、`xiaohongshu`、`xiaoyuzhou`、`linkedin`，浏览器
 `browse` 复合动作）+ 工具型平台（`deepwiki` 公开 MCP、`notebooklm` 本地
-CLI）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
+CLI）+ 微信公众号（`wechat`：Exa 搜索、Sogou 浏览器兜底、登录态浏览器
+读取）。CLI 已支持 `platforms`、`doctor`、`explain`、`plugin`、
 `skill`、`check`、`cooldowns`、`search` 和 `read`。剩余平台、MCP 适配器详见
 `docs/implementation.md`。
 
@@ -59,6 +60,8 @@ python -m omnihub.cli search "科技" --platform xiaoyuzhou --limit 3
 python -m omnihub.cli transcribe https://www.xiaoyuzhoufm.com/episode/6adcced4c96c8942ec11a649 --text
 python -m omnihub.cli search "python" --platform linkedin --limit 3
 python -m omnihub.cli read https://www.linkedin.com/jobs/view/4379639599/ --text
+python -m omnihub.cli search "人工智能" --platform wechat --limit 3
+python -m omnihub.cli read https://mp.weixin.qq.com/s/nN5HH8JGVH9IQvuM5m-bIw --text
 
 # 工具型平台
 python -m omnihub.cli read facebook/react --platform deepwiki --text
@@ -97,24 +100,26 @@ omnihub platforms --text
 
 ```bash
 # 安装后使用 xiaohongshu-cli；未安装则用 python -m
-python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli login-status
-python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli search "西安 红叶" --limit 5
-python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli read 6addcd87000000002c00cb5a
-python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
+python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli login-status
+python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli search "西安 红叶" --limit 5
+python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli read 6addcd87000000002c00cb5a
+python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli read <note-id> --author-url "<作者主页 URL>"
 ```
 
 输出统一为 `{"ok": true, "data": ...}`，错误时为
 `{"ok": false, "error": {"code", "message"}}` 并以非零码退出。token 缓存在
-`$XDG_CACHE_HOME/xiaohongshu-cli/notes.json`（0600，不保存查询词）。使用说明
-见 [`omnihub/platforms/xiaohongshu/xiaohongshu-cli/SKILL.md`](omnihub/platforms/xiaohongshu/xiaohongshu-cli/SKILL.md)。
+`$XDG_CACHE_HOME/xiaohongshu-cli/notes.json`（0600，不保存查询词）。平台技能入口
+见 [`omnihub/platforms/xiaohongshu/SKILL.md`](omnihub/platforms/xiaohongshu/SKILL.md)，
+CLI 的完整参数与错误码见
+[`references/xiaohongshu-cli.md`](omnihub/platforms/xiaohongshu/references/xiaohongshu-cli.md)。
 
 `web` 是公共网页兜底平台：搜索走 Exa hosted MCP（无需 Key），读取依次
 尝试 Jina Reader、kimi-webbridge 真实浏览器（daemon 可用时）、Exa。它的
 默认优先级是 10，因此普通 `search` 默认走公共网页；站点平台（`github`
 100、`bilibili` 110、`v2ex` 120、`reddit` 130、`youtube` 140、`twitter`
 150、`xueqiu` 160、`xiaohongshu` 170、`xiaoyuzhou` 180、`linkedin` 190、
-`deepwiki` 200、`notebooklm` 210）通过 `--platform`，或 routing 里自定义的
-`intents` 使用。`read` 按 URL 域名
+`deepwiki` 200、`notebooklm` 210、`wechat` 220）通过 `--platform`，或
+routing 里自定义的 `intents` 使用。`read` 按 URL 域名
 先选站点平台，再自动把 `web` 作为最后一个来源。
 
 - `github`：REST 搜索仓库；读取仓库（含 README）、issue、PR。设置
@@ -147,6 +152,13 @@ python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli read <note-id> --author-
   `~/.omnihub/secrets.yaml`）；密钥缺失时返回 `NEED_SETUP`，不会影响
   `search` / `read`。
 - 小红书的读取链接必须带搜索结果里的 `xsec_token`；token 会过期，因此
+  `check` 只对搜索做 live 回归。
+- `wechat`：搜索优先走 Exa `site:mp.weixin.qq.com`，直接返回文章原文链接；
+  Exa 不可用时回退到 Sogou 微信搜索的浏览器页面（结果为 Sogou 跳转链接，
+  只在执行搜索的浏览器 session 内可解析）。`read` 通过 kimi-webbridge 打开
+  文章页：先在一个轻量标签页上应用移动端微信 UA（`Emulation.setUserAgentOverride`），
+  再加载目标链接，避免微信对桌面/自动化 UA 返回“环境异常”验证页；随后提取
+  `#js_content`、标题、公众号名和发布时间。文章 URL 可能随时被删除，因此
   `check` 只对搜索做 live 回归。
 - `deepwiki`：读取公开仓库的 DeepWiki 文档。直接 POST 官方 MCP 端点
   `read_wiki_contents`，无需 Node 或 API Key；接受 `owner/repo`、GitHub
@@ -197,9 +209,10 @@ omnihub/
   platforms/youtube/     # Exa 搜索与视频页/字幕读取、浏览器兜底
   platforms/twitter/     # 登录态浏览器搜索与推文读取（Exa 搜索兜底）
   platforms/xueqiu/      # 登录态浏览器讨论搜索与状态读取
-  platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取；含独立 xiaohongshu_cli.py 与 skill
+  platforms/xiaohongshu/ # 登录态浏览器笔记搜索与读取；scripts/xiaohongshu_cli.py + references/
   platforms/xiaoyuzhou/  # Exa 搜索、Jina/浏览器/Exa 读取、Whisper 转写
   platforms/linkedin/    # 浏览器内 guest API 职位搜索与职位详情
+  platforms/wechat/      # Exa/Sogou 搜索、移动 UA 浏览器读取公众号文章
   platforms/deepwiki/    # 公开 MCP 读取仓库 DeepWiki 文档
   platforms/notebooklm/  # 本地 notebooklm CLI：笔记本搜索与摘要
   utils/                 # URL、文本脱敏、子进程环境（复用 Agent-Reach）
@@ -208,8 +221,18 @@ omnihub/
 ## 平台即插件
 
 每个平台是一个目录，`platform.yaml` 是唯一必需文件。删除目录即下线，
-不需要改核心代码。声明式平台直接引用共享适配器；需要代码时，平台目录可
-提供 `search.py` / `read.py` / `parse.py` / `transcribe.py`（仅内置平台默认受信任）。
+不需要改核心代码。`platform.yaml` 只放配置，不放实现：
+
+- 需要代码时，实现文件放在平台的 `scripts/` 下，并由 YAML 显式引用：
+  `builtin` 来源写 `script: scripts/search.py`，`daemon` 的 `browse` 来源写
+  `script: scripts/search.js`，自定义解析器写顶层 `parse_script: scripts/parse.py`。
+- 脚本路径必须是 `scripts/` 下的相对路径；`..`、绝对路径、反斜杠和符号
+  链接逃逸在加载期即报错。
+- 每个平台都有一个手写 `SKILL.md`，封装本平台的触发场景、命令、参数、
+  来源顺序与错误码。平台因此既能单独作为 Skill 使用，也能通过 OmniHub
+  与其他平台协作完成多源搜索与内容提取。
+- 未声明 `script` 的第三方插件仍按旧约定回退到平台根目录的同名文件；
+  内置平台全部使用 `scripts/` 布局，并由测试禁止内联 JavaScript。
 
 ```yaml
 id: example
@@ -248,7 +271,8 @@ kimi-webbridge 读取来源。平台的 `auth.secret` 表示“可选登录凭�
 
 插件放在 `$OMNIHUB_PLUGIN_PATH`、`~/.omnihub/plugins/<id>/` 或
 `./.omnihub/plugins/<id>/`，同名覆盖内置平台。纯清单插件直接加载；
-带 `search.py` / `read.py` / `parse.py` / `transcribe.py` 的插件是在用户权限下执行 Python，
+带 Python/JavaScript 实现的插件（`scripts/*.py`、`scripts/*.js`，或遗留的
+根目录 `search.py` / `read.py` / `parse.py` / `transcribe.py`）是在用户权限下执行，
 因此必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写 `[]`）
 并且显式信任：
 

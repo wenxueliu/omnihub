@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from omnihub.core.registry import (
-    CODE_HOOKS,
     MANIFEST_NAME,
     ManifestError,
+    code_hooks_in,
     default_trusted_plugins,
     load_platform,
 )
@@ -51,7 +51,7 @@ class PluginReport:
 
 
 def _hooks_in(directory: Path) -> tuple[str, ...]:
-    return tuple(name for name in CODE_HOOKS if (directory / name).is_file())
+    return code_hooks_in(directory)
 
 
 def inspect_plugin(

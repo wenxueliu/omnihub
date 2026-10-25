@@ -26,6 +26,7 @@ actions:
       - adapter: builtin
         name: deepwiki-mcp
         call: read_wiki
+        script: scripts/read.py
         parse:
           - json_items
         priority: 10

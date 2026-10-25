@@ -497,7 +497,10 @@ def _platform_module(name: str) -> Any:
     registry = discover(plugin_dirs=[], include_builtin=True)
     platform = registry.get("xiaoyuzhou")
     assert platform is not None
-    module = pipeline.load_platform_module(platform, name)
+    relative = f"scripts/{name}"
+    if not (platform.path.parent / relative).is_file():
+        relative = name
+    module = pipeline.load_platform_module(platform, relative)
     assert module is not None
     return module
 

@@ -1,6 +1,7 @@
 # OmniHub：从 Agent Reach 到平台化访问层（实现文档）
 
-- **状态**：M0–M5 已落地；278 项离线测试、21 项 live check 通过
+- **状态**：M0–M5 已落地；384 项离线测试、24 项 live check 已声明（23 项通过、
+  1 项因本机浏览器未登录失败）
 - **日期**：2026-10-25
 - **基线**：Agent-Reach v1.6.0（`reference/Agent-Reach`，只读参考）
 - **建议落地仓库**：`services/omnihub/`（独立 git 仓库）
@@ -43,7 +44,7 @@ Agent-Reach 目前是“一个平台一个 Python 类”的硬编码模型：
 |---|---|---|
 | 组织方式 | **按平台分** | 高内聚、可整块删除；工具是平台内部可替换的执行器 |
 | 搜索模式 | 默认 `first_success`，`--mode aggregate` 可选 | 默认低延迟、结果可控；聚合按需开启 |
-| 平台实现 | **声明式优先** + 目录内可选 Python | 简单平台只写 `platform.yaml`；复杂平台在目录内放 `search.py/parse.py/read.py` |
+| 平台实现 | **配置与实现分离** | `platform.yaml` 只放配置；复杂平台的 Python/JavaScript 实现放在目录内 `scripts/`，由 YAML 显式引用；每个平台另有一份手写 `SKILL.md` |
 | 优先级 | **平台级 + 平台内来源级** | 既能配“先问哪个平台”，也能配“平台内先走哪个工具” |
 | 配置格式 | YAML（复用 `pyyaml`） | 现有依赖已有，可读性优于 JSON |
 | 兼容策略 | 保持 CLI 语法、envelope、错误码；渐进迁移 | 现有使用方零感知 |
@@ -209,15 +210,19 @@ class RawResult:
 
 ```
 omnihub/platforms/<id>/
-  platform.yaml        # 必需：身份、动作、来源、优先级、依赖
-  search.py            # 可选：复杂搜索
-  parse.py             # 可选：平台专用解析器
-  read.py              # 可选：正文/详情读取
+  platform.yaml        # 必需：身份、动作、来源、优先级、依赖、脚本路径
+  SKILL.md             # 必需：手写的平台技能入口
+  scripts/             # 可选：所有实现
+    search.py          #   builtin 动作模块
+    parse.py           #   平台专用解析器（parse_script）
+    search.js          #   daemon browse 页面脚本
+  references/          # 可选：长文档（如 xiaohongshu-cli.md）
   fixtures/            # 原始响应样本（解析测试用）
-  tests/               # 契约测试 + 解析测试
 ```
 
 **目录即插件**：registry 扫描 `platforms/*/platform.yaml`，删除目录即下线。
+`platform.yaml` 不内联实现；脚本必须是 `scripts/` 下的相对路径，加载期校验
+存在性、后缀与目录逃逸。内置平台通过测试禁止 `code: |` 与 `args.code`。
 
 ### 5.2 `platform.yaml`
 
@@ -289,34 +294,71 @@ actions:
         parse: text
 ```
 
-### 5.3 Python 扩展
+### 5.3 脚本扩展
 
-只有声明不够时才使用。核心按约定加载：
+只有声明不够时才使用。脚本放在 `scripts/`，并在 YAML 中显式引用；核心
+不再靠动作名猜测（旧插件的根目录文件仍作为兼容回退）：
+
+```yaml
+parse_script: scripts/parse.py      # 平台级自定义解析器（仅 .py）
+
+actions:
+  search:
+    sources:
+      - adapter: builtin
+        call: search
+        script: scripts/search.py   # Python 模块，call 选函数
+      - adapter: daemon
+        call: browse
+        script: scripts/search.js   # 文件内容作为页面 JS 执行
+        args: {url: "${query-url}"}
+```
 
 ```python
-# omnihub/platforms/bilibili/parse.py
+# omnihub/platforms/bilibili/scripts/parse.py
 def parse(raw, *, action, ctx):
     ...
 ```
 
 ```python
-# omnihub/platforms/bilibili/search.py
+# omnihub/platforms/bilibili/scripts/search.py
 def search(query, *, limit, params, ctx):
     ...
 ```
 
-```python
-# omnihub/platforms/bilibili/read.py
-def read(target, *, params, ctx):
-    ...
+```javascript
+// omnihub/platforms/bilibili/scripts/read.js
+(async () => {
+  return JSON.stringify(await collectSubtitles());
+})()
 ```
 
 规则：
 
+- `script` 只允许 `builtin`（`.py`）或 `daemon` + `call: browse`（`.js`）；
+  `parse_script` 只允许 `.py`。
+- 同一来源不能同时声明 `script` 与 `args.code`。
+- 脚本路径必须是 `scripts/` 下的相对路径，禁止 `..`、绝对路径、反斜杠；
+  解析后必须仍在平台目录内（含符号链接）。
+- 适配器读取脚本文件内容；脚本本身**不做** `${...}` 模板替换。模板只作用于
+  来源的 `args` / `url` / `headers` / `body` / `data`。
 - 函数签名固定，返回统一 `Item`。
 - 不允许直接读 `.env`；凭据通过 `ctx.secret(key)` 获取。
 - 不允许绕过 `ctx.http` / `ctx.run_cmd`，否则会失去超时、大小上限、URL 安全与错误分类。
 - 平台目录内可以放私有辅助模块，但不能 import 其他平台。
+
+### 5.4 `SKILL.md`
+
+每个平台目录必须有一份手写的 `SKILL.md`，作为该平台可独立使用的技能入口。
+要求：
+
+- frontmatter 的 `name` 等于平台 id；`description` 覆盖中英文触发词且不超过
+  500 字符。
+- 正文写清适用场景、命令、参数、多源协作方式、依赖、来源顺序、输出结构、
+  错误码和随包文件。
+- 参数、动作、来源顺序与脚本相对路径必须与 `platform.yaml` 保持一致；
+  `tests/test_platform_skill.py` 会检查漂移。
+- 不出现凭据值、`args`、`headers`、绝对路径或来源私有内容。
 
 ---
 
@@ -554,7 +596,8 @@ omnihub/
 
 - 删除平台目录即下线；registry 只扫描存在的目录。
 - 不维护中心 import 列表。
-- `omnihub platforms` 与 SKILL.md 自动更新。
+- `omnihub platforms` 与 `plugin list` 自动反映目录内容；各平台的 SKILL.md
+  随平台目录一起删除。
 
 ### 10.3 依赖
 
@@ -600,7 +643,7 @@ requires:
 
 原则：**复用传输、解析、安全、错误分类这类横切能力；不复用静态平台表、
 `if/elif` 分发、`sys.path` 引导和 import 时读 `.env`**。平台边界内保持
-manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
+manifest + `scripts/` 下的少量实现，共享能力全部走 `core/*` / `adapters/*`。
 
 ### 已落地（M0）
 
@@ -641,7 +684,7 @@ manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
 | `core/doctor.py` | 新实现 | 工具、适配器、必需/可选凭据、builtin auth.status；不联网、不泄露值 |
 | `core/pipeline.py` source `when` | 新实现 | `secret:NAME` / `tool:NAME`；不满足记为 `SKIP` |
 | `core/template.py` 过滤器 | 新实现 | `urlencode` / `lower` / `upper` / `strip`；查询值安全入 URL |
-| `omnihub/parse/web.py` | M1 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
+| `omnihub/parse/web.py` | M1 时期的 `platforms/web/parse.py` | Exa/Jina 解析器改为共享命名解析器 |
 
 ### 已落地（M3）
 
@@ -762,9 +805,9 @@ HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML �
 
 | 平台 | search | read | 可选登录 |
 |---|---|---|---|
-| `github` (100) | `GET /search/repositories`（token / 匿名两个来源） | `read.py`：仓库 + README、issue/PR + 前 50 条评论 | `GITHUB_TOKEN` / `GH_TOKEN` |
-| `v2ex` (120) | SOV2EX `/api/search`；失败回退 Exa `site:v2ex.com` | `read.py`：`topics/show.json` + `replies/show.json` | 无 |
-| `bilibili` (110) | Exa `site:bilibili.com` | `daemon browse` 解析 `cid` + 字幕签名地址 → `parse.py` 下载字幕 JSON | 浏览器登录态（daemon） |
+| `github` (100) | `GET /search/repositories`（token / 匿名两个来源） | `scripts/read.py`：仓库 + README、issue/PR + 前 50 条评论 | `GITHUB_TOKEN` / `GH_TOKEN` |
+| `v2ex` (120) | SOV2EX `/api/search`；失败回退 Exa `site:v2ex.com` | `scripts/read.py`：`topics/show.json` + `replies/show.json` | 无 |
+| `bilibili` (110) | Exa `site:bilibili.com` | `daemon browse`（`scripts/read.js`）解析 `cid` + 字幕签名地址 → `scripts/parse.py` 下载字幕 JSON | 浏览器登录态（daemon） |
 
 路由默认值调整为 `web: 10`、`github: 100`、`bilibili: 110`、`v2ex: 120`：
 普通搜索走公共网页，站点平台通过 `--platform` 或用户配置的 intent 使用；
@@ -845,8 +888,9 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   `./.omnihub/plugins/`，同名覆盖内置；删除目录即下线。
 - `plugin validate [PATH...]` / `plugin list`：只校验不执行；检查 schema、
   目录名与 id、跨文件引用、Python hooks 与能力声明，输出 errors/warnings。
-- 插件信任：纯清单插件直接加载；带 `search.py` / `read.py` / `parse.py` / `transcribe.py`
-  的插件必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写
+- 插件信任：纯清单插件直接加载；带代码的插件（`scripts/*.py`、`scripts/*.js`，
+  以及遗留的根目录 `search.py` / `read.py` / `parse.py` / `transcribe.py`）
+  必须声明 `capabilities`（`http` / `exec` / `browser`，纯计算写
   `[]`），并在 `--trust-plugin <id>` 或 `OMNIHUB_TRUSTED_PLUGINS` 后才执行。
   未信任时平台仍可被发现，运行时返回 `NEED_SETUP`。
 - `explain` 增加 `platforms[]`：按计划顺序列出平台来源的 adapter、name、
@@ -1049,6 +1093,32 @@ kimi-webbridge daemon 适配器、`--enrich N` 与 `web` 浏览器读取来源�
   （noop 无 check；notebooklm 跳过），其中 `deepwiki` 经 `deepwiki-mcp`
   返回 ok，耗时约 1.9s。
 
+**M5 微信公众号（2026-10-25）**
+
+- `wechat` (220)：搜索优先 Exa `site:mp.weixin.qq.com`，直接返回文章原文
+  链接；Exa 不可用时回退到 Sogou 微信搜索页（`ul.news-list li` → `h3 a`、
+  `.s-p a`、`.txt-info`、`.s2`），结果是 Sogou 跳转链接，只在执行搜索的
+  浏览器 session 内可解析。
+- `read` 只走 daemon `browse`：等待 `#js_content`，提取标题、公众号名、
+  作者、发布时间、正文与 `data-src` 图片 URL（选择器与回退对齐
+  `wechat-article-fetcher` 参考实现）。验证页（URL 含
+  `wappoc_appmsgcaptcha` / `secitptpage` 或存在 `#js_verify`）→
+  `PLATFORM_BLOCKED`；无正文且含“请在微信客户端打开”/“环境异常”→
+  `PLATFORM_BLOCKED`；文章被删除、违规、迁移或停止访问 → `NOT_FOUND`。
+  文章 URL 可能随时失效，因此 `check` 只声明 `search`。
+- 微信对桌面/自动化 UA 返回“环境异常”。`browse` 新增可选 `user_agent`
+  （对象，透传给 CDP `Emulation.setUserAgentOverride`）：先在一个固定
+  轻量页 `https://example.com/` 上创建/复用标签并应用 UA，再以
+  `newTab: false` 加载目标，避免桌面 UA 首跳超时。CDP 不可用时保留普通
+  导航路径，并在 `meta.ua_override_failed` 标记。
+- 导航超时恢复增加“导航前标签 ID 快照”：daemon 不返回 `groupTitle` 时，
+  只接管导航后新出现且 URL/host 匹配的标签，仍不会碰用户原有标签。
+- **验收结果**：`python -m pytest` 384 项通过；`doctor` 15 个平台、0 error、
+  1 degraded；真实 `check` 24 项、1 failed（本机 Reddit 浏览器未登录，
+  `NEED_LOGIN`，环境问题）、2 skipped，`wechat search` 经 Exa 约 0.8s。
+  真实文章读取（移动 UA）返回标题、公众号名、发布时间和约 8100 字正文，
+  端到端约 2.3s（此前桌面 UA 首跳要约 32s）。
+
 ### M5 — 加固与发布
 
 **交付物**
@@ -1136,7 +1206,8 @@ M0–M4 已全部落地；M5 的 `check` live 回归、统一限流/冷却、冷
 重置、适配器边界测试、迁移指南与发布验收也已完成。剩余：
 
 - 登录/浏览器依赖平台中的 twitter、xueqiu、xiaohongshu、xiaoyuzhou、
-  linkedin 已通过 daemon `browse` 迁移（批次三）；facebook、instagram、boss
-  明确不迁移。来源确认结论保留在 `docs/migration.md` 第 5 节。
+  linkedin 已通过 daemon `browse` 迁移（批次三），wechat 的文章读取也走同一
+  路径（搜索优先 Exa）；facebook、instagram、boss 明确不迁移。来源确认结论
+  保留在 `docs/migration.md` 第 5 节。
 - 已声明但未实现的 `mcp` / `browser` 适配器。当前浏览器能力由 `daemon`
   的 `browse` 复合动作提供，不需要单独的 `browser` 适配器。

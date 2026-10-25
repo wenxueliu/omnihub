@@ -19,9 +19,21 @@ def search(query, limit=5, params=None, ctx=None):
 """
 
 
-def _plugin(root, platform_id, *, capabilities=None, hook=True):
+def _plugin(
+    root, platform_id, *, capabilities=None, hook=True, script=None, inline_code=None
+):
     directory = root / platform_id
     directory.mkdir(parents=True)
+    source = {
+        "adapter": "builtin",
+        "call": "search",
+        "parse": "json",
+        "priority": 10,
+    }
+    if script is not None:
+        source["script"] = script
+    if inline_code is not None:
+        source["args"] = {"code": inline_code}
     manifest = {
         "id": platform_id,
         "description": f"{platform_id} plugin",
@@ -29,9 +41,7 @@ def _plugin(root, platform_id, *, capabilities=None, hook=True):
         "actions": {
             "search": {
                 "params": {"query": {"type": "str", "required": True}},
-                "sources": [
-                    {"adapter": "builtin", "call": "search", "parse": "json", "priority": 10}
-                ],
+                "sources": [source],
             }
         },
     }
@@ -42,6 +52,10 @@ def _plugin(root, platform_id, *, capabilities=None, hook=True):
     )
     if hook:
         (directory / "search.py").write_text(SEARCH_HOOK, encoding="utf-8")
+    if script is not None:
+        path = directory / script
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(SEARCH_HOOK, encoding="utf-8")
     return directory
 
 
@@ -193,3 +207,74 @@ def test_plugin_validate_missing_path_is_an_error(tmp_path, capsys):
     assert main(["plugin", "validate", str(missing)]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["errors"] == [{"path": str(missing), "message": "path does not exist"}]
+
+
+def test_bundled_scripts_need_declared_capabilities(tmp_path):
+    root = tmp_path / "plugins"
+    _plugin(root, "alpha", hook=False, script="scripts/search.py")
+
+    registry = discover(plugin_dirs=[root], include_builtin=False)
+    assert registry.platforms == {}
+    assert any("declares no capabilities" in error.message for error in registry.errors)
+
+
+def test_bundled_scripts_are_reported_as_hooks(tmp_path):
+    root = tmp_path / "plugins"
+    _plugin(
+        root,
+        "alpha",
+        capabilities=["http"],
+        hook=False,
+        script="scripts/search.py",
+    )
+
+    registry = discover(plugin_dirs=[root], include_builtin=False)
+    platform = registry.platforms["alpha"]
+    assert platform.trusted is False
+    assert platform.code_hooks == ("scripts/search.py",)
+
+
+def test_untrusted_plugin_scripts_are_refused(tmp_path, capsys):
+    root = tmp_path / "plugins"
+    _plugin(
+        root,
+        "alpha",
+        capabilities=["http"],
+        hook=False,
+        script="scripts/search.py",
+    )
+
+    assert (
+        main(
+            [
+                "search",
+                "hi",
+                "--plugin-dir",
+                str(root),
+                "--no-builtin",
+            ]
+        )
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "NEED_SETUP"
+    assert "trust" in payload["error"]["message"]
+
+
+def test_plugin_source_cannot_declare_script_and_inline_code(tmp_path):
+    root = tmp_path / "plugins"
+    _plugin(
+        root,
+        "alpha",
+        capabilities=["http"],
+        hook=False,
+        script="scripts/search.py",
+        inline_code="return []",
+    )
+
+    registry = discover(plugin_dirs=[root], include_builtin=False)
+    assert registry.platforms == {}
+    assert any(
+        "both script and args.code" in error.message for error in registry.errors
+    )

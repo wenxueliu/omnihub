@@ -1,16 +1,13 @@
----
-name: xiaohongshu-cli
-description: Use when the user wants to search or read Xiaohongshu (小红书) notes. Invoke when the user mentions 小红书/Xiaohongshu, asks to search notes or comments there, or wants the body of a Xiaohongshu note.
----
-
 # Xiaohongshu CLI
 
 Searches and reads Xiaohongshu notes in the user's real, logged-in browser through the Kimi Browser Extension daemon (`kimi-webbridge`). Read-only: it does not like, comment, follow, or post.
 
+This CLI is a standalone helper bundled with the `xiaohongshu` platform. The platform's `SKILL.md` covers the OmniHub actions; this reference documents the lower-level CLI, which adds token caching and an author-profile fallback for expired `xsec_token` values.
+
 ## Requirements
 
 - The `kimi-webbridge` skill. If a command fails because the daemon is unreachable or the extension is not connected, recover the way that skill describes, then retry. If the daemon is not on its default address, pass `--daemon-url http://<host>:<port>`.
-- The CLI. Either install this repo (`pip install -e .`) and run `xiaohongshu-cli`, or run it from the repo root as `python -m omnihub.platforms.xiaohongshu.xiaohongshu_cli`.
+- The CLI. Either install this repo (`pip install -e .`) and run `xiaohongshu-cli`, or run it from the repo root as `python -m omnihub.platforms.xiaohongshu.scripts.xiaohongshu_cli`.
 - A logged-in browser. Run `xiaohongshu-cli login-status` first. If it reports `not_logged_in`, ask the user to sign in at <https://www.xiaohongshu.com> in that browser, then retry. Never automate the login form.
 
 ## Commands

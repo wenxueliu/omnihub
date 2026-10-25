@@ -52,6 +52,8 @@ def make_platform(tmp_path):
         auth=None,
         level: str = "default",
         description: str | None = None,
+        capabilities=None,
+        parse_script: str | None = None,
     ) -> Path:
         directory = Path(root) / platform_id
         directory.mkdir(parents=True)
@@ -67,6 +69,10 @@ def make_platform(tmp_path):
             data["requires"] = requires
         if auth:
             data["auth"] = auth
+        if capabilities is not None:
+            data["capabilities"] = list(capabilities)
+        if parse_script is not None:
+            data["parse_script"] = parse_script
         (directory / "platform.yaml").write_text(
             yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
         )

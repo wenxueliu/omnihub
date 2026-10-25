@@ -23,6 +23,7 @@ actions:
       - adapter: builtin
         name: noop
         call: noop_search
+        script: scripts/search.py
         parse:
           - json_items
         priority: 10
@@ -36,6 +37,7 @@ actions:
       - adapter: builtin
         name: noop
         call: noop_read
+        script: scripts/read.py
         parse:
           - json
         priority: 10

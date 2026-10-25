@@ -135,3 +135,54 @@ def test_envelope_matches_schema():
     validator.validate(
         envelope(channel="noop", action="search", error=OmniHubError(TIMEOUT, "slow"))
     )
+
+
+def test_builtin_noop_sources_declare_their_scripts():
+    platform = load_platform(NOOP)
+    search = platform.actions["search"].enabled_sources()[0]
+    read = platform.actions["read"].enabled_sources()[0]
+    assert search.script == "scripts/search.py"
+    assert read.script == "scripts/read.py"
+    assert platform.parse_script is None
+
+
+def test_builtin_platform_parses_a_custom_parser_script():
+    path = NOOP.parents[1] / "github" / "platform.yaml"
+    platform = load_platform(path)
+    assert platform.parse_script == "scripts/parse.py"
+
+
+def _platform_with_script(script: object) -> dict:
+    data = _base()
+    data["actions"]["search"]["sources"][0]["script"] = script
+    return data
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "/tmp/search.py",
+        "../search.py",
+        "lib/search.py",
+        "scripts/search.sh",
+        "scripts/search",
+        "scripts\\search.py",
+        42,
+    ],
+)
+def test_invalid_source_script_is_rejected(tmp_path, script):
+    path = _write(tmp_path / "sample" / "platform.yaml", _platform_with_script(script))
+    with pytest.raises(ManifestError, match="script"):
+        load_platform(path)
+
+
+@pytest.mark.parametrize(
+    "parse_script",
+    ["/tmp/parse.py", "../parse.py", "scripts/parse.sh", 42],
+)
+def test_invalid_parse_script_is_rejected(tmp_path, parse_script):
+    data = _base()
+    data["parse_script"] = parse_script
+    path = _write(tmp_path / "sample" / "platform.yaml", data)
+    with pytest.raises(ManifestError, match="parse_script"):
+        load_platform(path)

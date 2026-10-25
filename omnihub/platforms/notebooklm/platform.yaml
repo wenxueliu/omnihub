@@ -33,6 +33,7 @@ actions:
         tool: notebooklm
         when: tool:notebooklm
         call: search_notebooks
+        script: scripts/search.py
         parse:
           - json_items
         priority: 10
@@ -50,6 +51,7 @@ actions:
         tool: notebooklm
         when: tool:notebooklm
         call: read_notebook
+        script: scripts/read.py
         parse:
           - json_items
         priority: 10

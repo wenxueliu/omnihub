@@ -8,10 +8,13 @@ from omnihub.core.config import DEFAULT_ROUTING
 from omnihub.core.doctor import build_doctor_report
 from omnihub.core.pipeline import run_action
 from omnihub.core.registry import discover
+from omnihub.core.result import UPSTREAM_BROKEN, OmniHubError
 from omnihub.core.router import build_plan
 
 PLATFORMS = Path(__file__).resolve().parents[1] / "omnihub" / "platforms"
 BROWSER_PLATFORMS = ("twitter", "xueqiu", "xiaohongshu", "linkedin")
+# WeChat has a browser source too, but Exa is its primary search source.
+BROWSER_JS_PLATFORMS = BROWSER_PLATFORMS + ("wechat",)
 
 
 def _registry():
@@ -51,6 +54,29 @@ class HttpStub:
 
     def invoke(self, call, *, ctx):
         raise AssertionError("these tests exercise browser sources only")
+
+
+class OkHttpStub:
+    kind = "http"
+
+    def __init__(self, result):
+        self.result = result
+
+    def probe(self):
+        return Health(ok=True)
+
+    def invoke(self, call, *, ctx):
+        return self.result
+
+
+class FailingHttpStub:
+    kind = "http"
+
+    def probe(self):
+        return Health(ok=True)
+
+    def invoke(self, call, *, ctx):
+        raise OmniHubError(UPSTREAM_BROKEN, "Exa is unavailable")
 
 
 class FakeCtx:
@@ -107,6 +133,7 @@ def test_browser_platforms_are_in_the_catalog_with_their_priorities():
         "xiaohongshu": (170, {"xiaohongshu.com", "xhslink.com"}),
         "xiaoyuzhou": (180, {"xiaoyuzhoufm.com"}),
         "linkedin": (190, {"linkedin.com"}),
+        "wechat": (220, {"mp.weixin.qq.com", "weixin.sogou.com"}),
     }
     for platform_id, (priority, domains) in expected.items():
         platform = registry.platforms[platform_id]
@@ -125,6 +152,8 @@ def test_browser_platform_domains_route_before_the_public_web_fallback():
         ("xiaohongshu", "https://www.xiaohongshu.com/explore/abc"),
         ("xiaoyuzhou", "https://www.xiaoyuzhoufm.com/episode/abc"),
         ("linkedin", "https://www.linkedin.com/jobs/view/42/"),
+        ("wechat", "https://mp.weixin.qq.com/s/example"),
+        ("wechat", "https://weixin.sogou.com/link?url=example"),
     ):
         plan = build_plan(registry, DEFAULT_ROUTING, action="read", url=url)
         assert plan.platform_ids[0] == platform_id
@@ -150,13 +179,16 @@ def test_browser_search_sources_go_through_the_daemon_and_parse_items():
         call = daemon.calls[0]
         assert call.call == "browse"
         assert call.raw["platform_trusted"] is True
-        args = call.args
-        assert args["code"]
+        assert "code" not in call.args
+        script = Path(call.script)
+        assert script.parent.name == "scripts"
+        assert script.suffix == ".js"
+        code = script.read_text(encoding="utf-8")
         # The search text comes from the page URL, never from interpolated
         # JavaScript source.
-        assert "${" not in args["code"]
-        assert "location" in args["code"]
-        assert "https://" in args["url"]
+        assert "${" not in code
+        assert "location" in code
+        assert "https://" in call.args["url"]
 
 
 def test_browser_read_sources_return_a_daemon_page():
@@ -188,6 +220,114 @@ def test_browser_read_sources_return_a_daemon_page():
         assert daemon.calls[0].args["url"] == target
 
 
+def test_wechat_search_prefers_exa_and_returns_direct_article_urls():
+    registry = _registry()
+    http = OkHttpStub(
+        RawResult(
+            data={
+                "result": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Title: 人工智能\n"
+                                "URL: https://mp.weixin.qq.com/s/example\n"
+                                "Author: Example 公众号\n"
+                                "\n正文"
+                            ),
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    daemon = DaemonStub(
+        lambda call: (_ for _ in ()).throw(AssertionError("the daemon must not run"))
+    )
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "人工智能", "limit": 2},
+        ctx=FakeCtx(),
+        platform="wechat",
+        adapters={"daemon": daemon, "http": http},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "exa"
+    assert result["items"][0]["url"] == "https://mp.weixin.qq.com/s/example"
+    assert daemon.calls == []
+
+
+def test_wechat_search_falls_back_to_the_sogou_browser():
+    registry = _registry()
+    daemon = DaemonStub(
+        lambda call: RawResult(
+            data=[
+                {
+                    "title": "人工智能",
+                    "url": "https://weixin.sogou.com/link?url=example",
+                    "author": "Example 公众号",
+                    "text": "摘要",
+                }
+            ]
+        )
+    )
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="search",
+        params={"query": "人工智能", "limit": 2},
+        ctx=FakeCtx(),
+        platform="wechat",
+        adapters={"daemon": daemon, "http": FailingHttpStub()},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "kimi-browser"
+    assert result["items"][0]["url"] == "https://weixin.sogou.com/link?url=example"
+    call = daemon.calls[0]
+    assert call.call == "browse"
+    assert "code" not in call.args
+    code = Path(call.script).read_text(encoding="utf-8")
+    assert "${" not in code
+    assert "location" in code
+
+
+def test_wechat_read_parses_article_fields_from_browser_json():
+    registry = _registry()
+    target = "https://mp.weixin.qq.com/s/example"
+    daemon = DaemonStub(
+        lambda call: RawResult(
+            data=[
+                {
+                    "title": "人工智能",
+                    "url": target,
+                    "author": "Example 公众号",
+                    "published_at": "2026-10-01",
+                    "text": "正文",
+                }
+            ]
+        )
+    )
+    result = run_action(
+        registry,
+        DEFAULT_ROUTING,
+        action="read",
+        params={"target": target},
+        ctx=FakeCtx(),
+        platform="wechat",
+        adapters={"daemon": daemon, "http": HttpStub()},
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "kimi-browser"
+    assert result["items"][0]["title"] == "人工智能"
+    assert result["items"][0]["author"] == "Example 公众号"
+    assert result["items"][0]["published_at"] == "2026-10-01"
+    assert result["items"][0]["text"] == "正文"
+    assert daemon.calls[0].call == "browse"
+    assert daemon.calls[0].args["url"] == target
+
+
 def test_missing_daemon_degrades_browser_platforms_instead_of_failing_doctor():
     registry = _registry()
     report = build_doctor_report(
@@ -200,7 +340,7 @@ def test_missing_daemon_degrades_browser_platforms_instead_of_failing_doctor():
         },
     )
     rows = {row["id"]: row for row in report["platforms"]}
-    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin"):
+    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "wechat"):
         assert rows[platform_id]["status"] == "degraded", platform_id
     assert report["errors"] == []
     assert report["meta"]["error_count"] == 0
@@ -225,20 +365,28 @@ def test_xiaoyuzhou_uses_http_sources_and_has_no_browser_dependency():
 
 def test_platform_check_declarations_are_runnable():
     registry = _registry()
-    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin"):
+    for platform_id in ("twitter", "xueqiu", "xiaohongshu", "xiaoyuzhou", "linkedin", "wechat"):
         check = registry.platforms[platform_id].check
         assert "search" in check, platform_id
         assert "query" in check["search"]
     # Xiaohongshu reads need a short-lived xsec_token, so only search is checked.
+    # WeChat article URLs are publisher-specific, so only search is checked.
     assert "read" in registry.platforms["linkedin"].check
     assert "read" not in registry.platforms["xiaohongshu"].check
+    assert "read" not in registry.platforms["wechat"].check
 
 
 def test_browser_manifests_do_not_interpolate_user_text_into_javascript():
-    for platform_id in BROWSER_PLATFORMS:
-        text = (PLATFORMS / platform_id / "platform.yaml").read_text(encoding="utf-8")
-        blocks = text.split("code: |")[1:]
-        assert blocks
-        for block in blocks:
-            code = block.split("parse:")[0]
-            assert "${" not in code, platform_id
+    for platform_id in BROWSER_JS_PLATFORMS:
+        scripts = sorted((PLATFORMS / platform_id / "scripts").glob("*.js"))
+        assert scripts, platform_id
+        for script in scripts:
+            code = script.read_text(encoding="utf-8")
+            assert "${" not in code, script
+
+
+def test_builtin_manifests_keep_javascript_out_of_the_yaml():
+    for manifest in PLATFORMS.glob("*/platform.yaml"):
+        text = manifest.read_text(encoding="utf-8")
+        assert "code: |" not in text, manifest
+        assert "args.code" not in text, manifest
