@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reach-platforms.dev/schema/tool.schema.json",
+  "title": "reach-platforms tool manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["http", "cli", "daemon", "mcp", "browser"]
+    },
+    "description": {"type": "string"},
+    "version": {"type": "integer", "minimum": 1},
+    "install": {"type": "object"},
+    "invoke": {"type": "object"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout": {"type": "number", "exclusiveMinimum": 0},
+        "max_output_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

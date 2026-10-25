@@ -1,0 +1,81 @@
+id: web
+description: Public-web fallback — Exa hosted search, Jina Reader and Exa page fetch.
+version: 1
+level: default
+priority: 900
+domains: []
+public_web: true
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: What to search for.
+      limit:
+        type: int
+        default: 5
+        description: Maximum number of results.
+    sources:
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_search_exa
+            arguments:
+              query: "${query}"
+              objective: "${query}"
+              numResults: "${limit}"
+        parse:
+          - exa_search
+        priority: 10
+        timeout: 30
+
+  read:
+    params:
+      target:
+        type: str
+        format: url
+        required: true
+        description: Public page URL.
+    sources:
+      - adapter: http
+        name: jina
+        url: https://r.jina.ai/${target}
+        headers:
+          Accept: text/plain
+          User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
+        parse:
+          - jina
+        priority: 10
+        timeout: 30
+      - adapter: http
+        name: exa
+        method: POST
+        url: https://mcp.exa.ai/mcp
+        headers:
+          Content-Type: application/json
+          Accept: application/json, text/event-stream
+        body:
+          jsonrpc: "2.0"
+          id: 1
+          method: tools/call
+          params:
+            name: web_fetch_exa
+            arguments:
+              urls:
+                - "${target}"
+              maxCharacters: 20000
+        parse:
+          - exa_read
+        priority: 20
+        timeout: 30

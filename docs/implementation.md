@@ -1,0 +1,860 @@
+# Agent Reach 平台化重构：实现文档
+
+- **状态**：设计定稿，尚未开始实现
+- **日期**：2026-10-25
+- **基线**：Agent-Reach v1.6.0（`reference/Agent-Reach`，只读参考）
+- **建议落地仓库**：`services/reach-platforms/`（独立 git 仓库）
+- **许可**：Agent-Reach 为 MIT；若复制其代码，需保留 LICENSE 与版权声明
+
+---
+
+## 1. 背景与目标
+
+Agent-Reach 目前是“一个平台一个 Python 类”的硬编码模型：
+
+- 平台注册在 `agent_reach/channels/__init__.py:24-39` 的静态列表，新增平台必须改代码。
+- 动作的后端顺序写死在 `Action.backends`（`agent_reach/channels/base.py:30-49`），用户无法配置。
+- `runtime/tools.py:52-68` 的工具表只负责“安装与路径解析”，不描述“怎么调用、怎么解析输出”。
+- `runtime/public_web.py:56-64` 把公共网页兜底写死为 `search/jobs/read` 三种动作名。
+- 配置只有扁平 key + 白名单（`runtime/manage.py:954`），无法覆盖平台顺序、工具顺序、超时。
+- 没有目录扫描或 entry point 发现机制，第三方无法在不改核心的情况下加平台。
+
+**目标**：
+
+1. 平台是插件与删除边界，一个平台一个自包含目录。
+2. 每个平台提供 `search`、`parse`、`read` 三项能力。
+3. 平台之间、平台内部工具之间都由**配置优先级**决定顺序。
+4. 搜索结果与正文读取分离：默认只返回链接与摘要，正文按需读取。
+5. 加/删平台不改中心注册表，`agent-reach platforms` 与 SKILL.md 自动反映变化。
+6. 保持现有 CLI 语法、JSON envelope、错误码兼容，支持渐进迁移。
+
+**非目标（首版不做）**：
+
+- 不把 YAML 做成图灵完备的脚本语言。
+- 不在首版重写全部平台；按平台逐个迁移。
+- 不引入新的写操作（发帖、评论、点赞、私信）。
+- 不改变“默认免 Key、只读、不替用户登录”的产品原则。
+
+---
+
+## 2. 定稿决策
+
+| 决策 | 结论 | 理由 |
+|---|---|---|
+| 组织方式 | **按平台分** | 高内聚、可整块删除；工具是平台内部可替换的执行器 |
+| 搜索模式 | 默认 `first_success`，`--mode aggregate` 可选 | 默认低延迟、结果可控；聚合按需开启 |
+| 平台实现 | **声明式优先** + 目录内可选 Python | 简单平台只写 `platform.yaml`；复杂平台在目录内放 `search.py/parse.py/read.py` |
+| 优先级 | **平台级 + 平台内来源级** | 既能配“先问哪个平台”，也能配“平台内先走哪个工具” |
+| 配置格式 | YAML（复用 `pyyaml`） | 现有依赖已有，可读性优于 JSON |
+| 兼容策略 | 保持 CLI 语法、envelope、错误码；渐进迁移 | 现有使用方零感知 |
+| 正文抓取 | 默认不自动抓；`--enrich N` 或 Agent 显式 `read` | 避免 N+1 请求与不必要的反爬风险 |
+| 落地位置 | `services/reach-platforms/` | `reference/` 只读，不能就地修改 |
+
+---
+
+## 3. 架构总览
+
+```
+Agent
+  │
+  ▼
+agent-reach search / read / platforms / explain
+  │
+  ▼
+Router（平台优先级 + intent 配置）
+  ├── platforms/bing_cn/     search → parse → read
+  ├── platforms/github/      search → parse → read
+  ├── platforms/bilibili/    search → parse → read
+  └── platforms/web/         兜底
+         │
+         ▼
+   shared adapters: http | cli | opencli | daemon | mcp
+   shared policy:   auth | rate-limit | timeout | URL 安全 | 错误分类
+```
+
+**分层原则**：
+
+- **平台层**：拥有业务语义（这个站点怎么搜、字段怎么映射、正文怎么读）。
+- **适配器层**：只负责“怎么调一个工具/接口”，不理解平台语义。
+- **核心层**：路由、管道、策略、统一结果，不为任何平台写特例。
+- **平台可以依赖适配器，适配器不能依赖平台。**
+
+---
+
+## 4. 核心契约
+
+### 4.1 Item（统一结果）
+
+沿用现有 `make_item`（`runtime/result.py:85-102`）：
+
+```python
+{
+    "title": str | None,
+    "url": str | None,
+    "author": str | None,
+    "published_at": str | None,   # ISO 8601
+    "text": str | None,           # 摘要或正文
+    "raw": Any,                   # 原始字段，便于追溯
+}
+```
+
+搜索结果额外带：
+
+```python
+{
+    "platform": str,      # 产出该条的平台 id
+    "source": str,        # 平台内来源，如 bili-cli / opencli / http
+    "priority": int,      # 命中的优先级
+}
+```
+
+### 4.2 Envelope（统一响应）
+
+沿用 `runtime/result.py:116-142`，`schema_version = 1`：
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "channel": "bilibili",
+  "action": "search",
+  "backend": "bili-cli",
+  "items": [],
+  "meta": {
+    "elapsed_ms": 123,
+    "attempts": [{"backend": "bili-cli", "result": "OK"}]
+  },
+  "error": null
+}
+```
+
+多平台聚合时：
+
+- `channel` 为 `"@aggregate"`（或保留第一个平台，另在 `meta.platforms` 列出）。
+- 每条 item 必须带 `platform`。
+- `meta.attempts` 记录每个平台/来源的结果。
+
+### 4.3 错误码
+
+沿用 `runtime/result.py:23-33`：
+
+`BAD_INPUT | NEED_SETUP | NEED_LOGIN | NOT_FOUND | TIMEOUT | RATE_LIMITED | PLATFORM_BLOCKED | BUSY | UPSTREAM_BROKEN`
+
+- 适配器负责把上游错误映射到这套码。
+- `FINAL_CODES` 仍然终止 fallback：`NOT_FOUND / BAD_INPUT / PLATFORM_BLOCKED / RATE_LIMITED / NEED_LOGIN / BUSY`。
+
+### 4.4 Platform Protocol
+
+```python
+class Platform(Protocol):
+    manifest: PlatformManifest
+
+    def search(self, query: str, *, limit: int, params: dict, ctx: Context) -> list[RawItem]:
+        """调用一个或多个工具，返回原始结果。"""
+
+    def parse(self, raw: RawResult, *, action: str, ctx: Context) -> list[Item]:
+        """把原始结果映射为统一 Item；解析失败抛 ReachError。"""
+
+    def read(self, target: str, *, params: dict, ctx: Context) -> Item:
+        """读取一个 URL 的正文/详情。"""
+```
+
+- 声明式平台由核心根据 `platform.yaml` 自动生成这三个方法。
+- 复杂平台在目录内提供同名 Python 模块，核心优先使用。
+- `parse` 必须可独立测试（输入 fixture，输出 Item）。
+
+### 4.5 Adapter Protocol
+
+```python
+class Adapter(Protocol):
+    kind: str
+
+    def probe(self) -> Health:
+        """工具是否可用、版本、登录态。"""
+
+    def invoke(self, call: ToolCall, ctx: Context) -> RawResult:
+        """执行一次调用，返回原始输出或结构化错误。"""
+```
+
+`ToolCall`：
+
+```python
+@dataclass
+class ToolCall:
+    tool: str
+    action: str
+    args: dict
+    argv: list[str] | None = None
+    body: dict | None = None
+    output: str = "json"          # json | yaml | text | markdown
+```
+
+`RawResult`：
+
+```python
+@dataclass
+class RawResult:
+    ok: bool
+    data: Any
+    text: str | None
+    error: ReachError | None
+    meta: dict                    # 耗时、字节数、命令、退出码
+```
+
+---
+
+## 5. 平台包规范
+
+### 5.1 目录结构
+
+```
+agent_reach/platforms/<id>/
+  platform.yaml        # 必需：身份、动作、来源、优先级、依赖
+  search.py            # 可选：复杂搜索
+  parse.py             # 可选：平台专用解析器
+  read.py              # 可选：正文/详情读取
+  fixtures/            # 原始响应样本（解析测试用）
+  tests/               # 契约测试 + 解析测试
+```
+
+**目录即插件**：registry 扫描 `platforms/*/platform.yaml`，删除目录即下线。
+
+### 5.2 `platform.yaml`
+
+```yaml
+id: bilibili
+description: B站视频
+level: default                 # default | optional | experimental
+priority: 20                   # 数字越小越优先
+domains: [bilibili.com, b23.tv]
+
+requires:
+  tools: [bili-cli]            # 缺失时 add 会安装
+  adapters: [cli, opencli, http]
+
+auth:
+  session: bili-cli
+  login: ["bili", "login"]
+  login_url: https://passport.bilibili.com/login
+
+actions:
+  search:
+    params:
+      query: {type: str, required: true}
+      limit: {type: int, default: 5}
+    sources:
+      - adapter: cli
+        tool: bili-cli
+        call: search
+        args: {query: "${query}", limit: "${limit}"}
+        parse: json:bilibili.video
+        priority: 10
+      - adapter: opencli
+        site: bilibili
+        args: {query: "${query}", limit: "${limit}"}
+        parse: opencli:generic
+        priority: 20
+      - adapter: http
+        url: "https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${query}"
+        parse: json:bilibili.api
+        priority: 30
+    public_web:
+      scopes: [bilibili.com/video/]
+      priority: 90
+
+  read:
+    params:
+      target: {type: str, required: true}
+    sources:
+      - adapter: cli
+        tool: bili-cli
+        call: video
+        args: {target: "${target}"}
+        parse: json:bilibili.video
+        priority: 10
+      - adapter: http
+        url: https://r.jina.ai/${target}
+        parse: markdown
+        priority: 90
+    timeout: 30
+
+  subtitle:
+    params:
+      target: {type: str, required: true}
+    sources:
+      - adapter: cli
+        tool: bili-cli
+        call: subtitle
+        args: {target: "${target}"}
+        parse: text
+```
+
+### 5.3 Python 扩展
+
+只有声明不够时才使用。核心按约定加载：
+
+```python
+# agent_reach/platforms/bilibili/parse.py
+def parse(raw, *, action, ctx):
+    ...
+```
+
+```python
+# agent_reach/platforms/bilibili/search.py
+def search(query, *, limit, params, ctx):
+    ...
+```
+
+```python
+# agent_reach/platforms/bilibili/read.py
+def read(target, *, params, ctx):
+    ...
+```
+
+规则：
+
+- 函数签名固定，返回统一 `Item`。
+- 不允许直接读 `.env`；凭据通过 `ctx.secret(key)` 获取。
+- 不允许绕过 `ctx.http` / `ctx.run_cmd`，否则会失去超时、大小上限、URL 安全与错误分类。
+- 平台目录内可以放私有辅助模块，但不能 import 其他平台。
+
+---
+
+## 6. 工具与适配器规范
+
+### 6.1 工具清单
+
+```yaml
+# agent_reach/tools/opencli.yaml
+id: opencli
+kind: cli
+install:
+  manager: npm
+  package: "@jackwener/opencli"
+  singleton: true
+  floor: "1.8.7"
+  exclude: ["1.8.8"]
+  tested: "1.8.7"
+  needs: [node]
+invoke:
+  argv: ["opencli", "${site}", ...]
+  output: json
+  error_parser: yaml-envelope
+limits:
+  timeout: 30
+  max_output_bytes: 8388608
+capabilities: [search, read, browser]
+```
+
+### 6.2 适配器清单
+
+| kind | 覆盖工具 | 关键实现点 |
+|---|---|---|
+| `http` | 直接 API、Jina、Exa、curl 场景 | 复用 `http_request`；代理、大小上限、SSRF、重定向复检 |
+| `cli` | `gh`、`bili`、`yt-dlp`、curl 命令 | argv 数组、cwd=home、进程组超时、输出上限 |
+| `opencli` | OpenCLI 站点工具 | `opencli <site> ... -f json`；错误实际是 YAML，需兼容 |
+| `daemon` | kimi-webbridge | `POST 127.0.0.1:10086/command`，body `{action,args,session}`，返回 `{ok,data\|error}`；需 `/status` 健康检查、cursor 分页 |
+| `mcp` | Exa hosted MCP | JSON-RPC，处理 SSE `data:` 行 |
+| `browser` | Cloak/OpenCLI 登录态 | 只提供会话与 Cookie，不做平台语义 |
+
+### 6.3 kimi-webbridge 的适配要点
+
+- 它是**常驻 loopback daemon**，不是一次性 CLI：`/home/chengnanfeng/.kimi-webbridge/bin/kimi-webbridge start` 后，`POST http://127.0.0.1:10086/command`。
+- 请求：`{"action": "navigate|snapshot|click|fill|evaluate|...", "args": {...}, "session": "<task>"}`。
+- 响应：`{"ok": true, "data": ...}` 或 `{"ok": false, "error": {"code", "message"}}`。
+- `extension_not_connected` 表示 daemon 在、浏览器扩展不在；映射为 `NEED_SETUP` 或 `NEED_LOGIN`，不要当成平台失败。
+- `snapshot` 支持 `max_chars`、`truncated`、`next_cursor`，cursor 5 分钟过期；适配器需要分页循环。
+- 地址可能变化：读 `~/.kimi-webbridge/config.json` 或 `/status`，不要硬编码端口。
+
+### 6.4 输出解析链
+
+统一按顺序尝试：
+
+1. JSON（标准 envelope）
+2. YAML（OpenCLI 错误块）
+3. 纯文本 / Markdown
+4. 平台专用 parser
+
+解析器命名：
+
+- `json:<name>`：JSON 字段映射
+- `yaml-envelope`：识别 `ok: false`
+- `html:<name>`：CSS/XPath
+- `markdown`
+- `text`
+
+所有 parser 必须有 fixture 测试。
+
+---
+
+## 7. 管道语义
+
+### 7.1 search
+
+```
+1. Router 解析平台顺序
+2. 对每个平台：
+   a. 按 sources[].priority 顺序尝试
+   b. adapter.invoke()
+   c. platform.parse()
+   d. 空结果 / 可重试错误 → 下一个 source
+   e. FINAL_CODES → 停止并返回错误
+3. first_success：第一个有结果的平台直接返回
+4. aggregate：前 K 个平台并发执行，合并、去重、排序
+```
+
+### 7.2 parse
+
+- 每个 source 声明 `parse`。
+- 平台可以覆盖通用 parser。
+- 解析失败视为该 source 失败，继续 fallback。
+- 解析结果必须经过 `normalize_item()`：URL 规范化、时间 ISO 化、字段裁剪。
+
+### 7.3 read
+
+```
+1. 按域名匹配平台（can_handle）
+2. 平台 read 的 sources 按 priority 尝试
+3. 无平台匹配 → web 兜底
+4. 内容可读性检查（登录墙/验证码/空壳）
+```
+
+### 7.4 按需抓正文
+
+两种模式：
+
+```bash
+agent-reach search "query"                 # 只返回链接 + 摘要
+agent-reach search "query" --enrich 3      # 自动读取前 3 条
+agent-reach read <url>                     # Agent 自己挑
+```
+
+`--enrich` 规则：
+
+- 只处理 `text` 为空或过短的 item。
+- 并发上限默认 3，单条超时独立。
+- 单条失败不拖垮整体，失败信息进 `meta.enrich_errors`。
+- 抓取前重新做 URL 安全校验。
+
+---
+
+## 8. 路由与优先级
+
+### 8.1 两级优先级
+
+1. **平台间**：先问哪个平台。
+2. **平台内来源**：先走哪个工具。
+
+### 8.2 解析顺序
+
+```
+--platform 显式指定
+  > intent 配置
+  > 平台 manifest 的 priority
+  > 目录名兜底
+```
+
+### 8.3 `routing.yaml`
+
+```yaml
+version: 1
+mode: first_success            # first_success | aggregate
+
+intents:
+  default: [bing_cn, baidu, duckduckgo, web]
+  code:    [github, web]
+  video:   [bilibili, youtube, web]
+  social:  [xiaohongshu, weibo, zhihu, web]
+  news:    [bing_cn, baidu, web]
+
+platforms:
+  github:      {enabled: true, priority: 5}
+  bing_cn:     {enabled: true, priority: 10}
+  bilibili:    {enabled: true, priority: 20}
+  xiaohongshu: {enabled: false}
+
+aggregate:
+  top: 3
+  per_platform_limit: 5
+  dedupe: true
+```
+
+### 8.4 配置分层
+
+```
+内置 manifest 默认值
+  └─ ~/.agent-reach/config/*.yaml
+       └─ ./.agent-reach/config/*.yaml
+            └─ 环境变量 / secrets
+                 └─ CLI 参数
+```
+
+合并规则：
+
+- 平台级：`enabled`、`priority`、`intents` 可覆盖。
+- 来源级：按 `id` 覆盖或新增；`disabled: true` 可关闭单个来源。
+- 不允许用户配置覆盖安全策略（URL 白名单、输出上限、超时下限）。
+
+---
+
+## 9. 目录结构
+
+```
+agent_reach/
+  core/
+    registry.py            # 扫描/加载/校验平台与工具清单
+    router.py              # 平台优先级、intent、first_success/aggregate
+    pipeline.py            # search → parse → read、来源降级、attempts
+    normalize.py           # Item 规范化、去重、排序
+    policy.py              # 超时、输出上限、URL 安全、限流、错误分类
+    result.py              # Item / envelope / error codes
+    config.py              # 分层配置合并
+    schema/
+      platform.schema.json
+      tool.schema.json
+      routing.schema.json
+  adapters/
+    base.py                # Adapter Protocol / ToolCall / RawResult
+    http.py  cli.py  opencli.py  daemon.py  mcp.py
+  parse/
+    generic.py             # JSON/YAML/HTML/regex 通用解析
+  platforms/
+    web/  github/  v2ex/  bilibili/  ...
+  tools/
+    *.yaml
+  cli.py
+```
+
+用户侧：
+
+```
+~/.agent-reach/
+  config/
+    routing.yaml
+    platforms/<id>.yaml     # 覆盖内置平台
+    tools/<id>.yaml
+  plugins/<id>/             # 第三方平台包
+  state.json
+  sessions/
+```
+
+---
+
+## 10. 插件发现、删除与依赖
+
+### 10.1 发现顺序
+
+1. 包内 `agent_reach/platforms/*/platform.yaml`
+2. 用户插件 `~/.agent-reach/plugins/*/platform.yaml`
+3. 可选：Python entry point `agent_reach.plugins`
+
+同名时用户目录覆盖内置，`extends: builtin:<id>` 表示增量覆盖。
+
+### 10.2 删除
+
+- 删除平台目录即下线；registry 只扫描存在的目录。
+- 不维护中心 import 列表。
+- `agent-reach platforms` 与 SKILL.md 自动更新。
+
+### 10.3 依赖
+
+```yaml
+requires:
+  tools: [bili-cli]
+  adapters: [cli, http]
+  platforms: [web]
+```
+
+- 加载时校验；缺失时 `doctor` 报具体缺什么。
+- 删除被依赖的平台时，`doctor` 提示受影响平台，而不是运行时神秘失败。
+- `web` 建议作为核心内置兜底，不允许插件删除。
+
+---
+
+## 11. 安全与策略
+
+必须共享，不能在平台里各写一套：
+
+- **命令执行**：argv 数组，禁止 `shell=True`；cwd 默认 home；超时后杀进程组。
+- **URL**：所有请求走 `normalize_public_http_url`；重定向后复检；阻止私有 IP、userinfo、非 http(s)。
+- **输出上限**：`http_request` 已有 8 MiB；`run_cmd` 需要补 `max_output_bytes`（当前无上限）。
+- **凭据**：`ctx.secret(key)`；日志与错误消息脱敏；不把 Cookie/Token 放进 `raw`。
+- **限流**：沿用 channel 级 cooldown、backend 级 pause；平台 manifest 可声明最小间隔。
+- **daemon**：只允许 loopback；校验地址来自本地配置文件；不对外暴露。
+- **插件信任**：纯清单插件可直接加载；带 Python 代码的插件必须显式 `--trust`，并声明所需能力（`http` / `exec` / `browser`）。
+
+---
+
+## 12. 兼容性
+
+- 保留 `agent-reach <platform> <action>` 语法与 JSON envelope。
+- 保留错误码与 `meta.attempts`。
+- 旧 `Channel` 类通过 `LegacyChannelAdapter` 包装，行为不变。
+- `channels/__init__.py` 的静态列表逐步清空，只留目录发现。
+- 迁移期间两套实现可并存，按平台切换。
+- `schema_version` 保持 1；新增字段只做向后兼容扩展。
+
+---
+
+## 12.5 代码复用清单
+
+原则：**复用传输、解析、安全、错误分类这类横切能力；不复用静态平台表、
+`if/elif` 分发、`sys.path` 引导和 import 时读 `.env`**。平台边界内保持
+manifest + 少量 Python，共享能力全部走 `core/*` / `adapters/*`。
+
+### 已落地（M0）
+
+| 目标 | 来源 | 处理 |
+|---|---|---|
+| `core/result.py` | `reference/Agent-Reach/agent_reach/runtime/result.py` | 原样复制后：补 `BUSY` 常量、Item 可选 `platform/source/priority`、`envelope(meta=...)` |
+| `core/clock.py` | `reference/Agent-Reach/agent_reach/runtime/clock.py` | 原样复制 |
+| `utils/url.py` | `reference/Agent-Reach/agent_reach/utils/url.py` | 原样复制；SSRF/私有地址/userinfo 校验 |
+| `utils/text.py` | `reference/Agent-Reach/agent_reach/utils/text.py` | 原样复制；URL 凭据脱敏 |
+| `utils/process.py` | `reference/Agent-Reach/agent_reach/utils/process.py` | 原样复制；子进程 UTF-8 |
+| `core/registry.py` 数据模型 | `reference/union-search-skill/scripts/cli/registry.py`、`union_search/platform_metadata.py` | 借 `PlatformCapability` 的字段划分（kind/auth/requires_env），但改为扫描目录，不保留 53 项静态表 |
+| `parse/generic.py` JSON salvage | `reference/union-search-skill/scripts/cli/adapters.py` | 重写为无副作用函数，增加 fenced/前后日志容错 |
+| `parse/generic.py` item 归一 | `reference/union-search-skill/scripts/union_search/structured_results.py` | 保留字段映射思路，去掉 `lxml`，统一到 `make_item` |
+| `core/router.py` 聚合语义 | `reference/union-search-skill/scripts/union_search/union_search.py` | 只借去重/并发/deadline 思路；`first_success` 与 intent 路由是新实现 |
+
+### 已落地（M1）
+
+| 目标 | 来源 | 处理 |
+|---|---|---|
+| `core/context.py` | Agent-Reach `runtime/run.py`；union-search `channels/ai_tools/adapter.py` | 有界子进程（进程组超时、输出上限、UTF-8）、HTTP 重定向逐跳复检、大小上限、`ctx.secret` |
+| `adapters/cli.py` | 同上 | 只接受 argv 数组；`tool/call/args` 映射为 `--key value`；无 `shell=True` |
+| `adapters/http.py` | Agent-Reach `runtime/run.py::http_request`、`channels/web.py::read` | manifest 声明 URL/method/headers/body；JSON body 编码；URL 安全校验 |
+| `adapters/opencli.py` | Agent-Reach `backends/opencli.py` | `opencli <site> ... -f json`；保留 YAML `ok: false` 错误块映射 |
+| `adapters/builtin.py` | 新实现 | 只加载 `origin == builtin` 的平台 Python；第三方插件暂不执行 |
+| `core/pipeline.py` | 新实现 | source 降级、`FINAL_CODES` 立即停止、`meta.attempts`、first_success / aggregate |
+| `core/normalize.py` | union-search `structured_results.py` 思路 | item 归一、URL 规范化、聚合去重 |
+| `core/template.py` | 新实现 | `${param}` / `${secret:NAME}`；纯占位符保留原生类型 |
+| `platforms/web` | Agent-Reach `channels/web.py`（Exa search、Jina/Exa read） | 拆成 manifest sources + `parse.py`；保留 antibot 检测与错误映射 |
+| `platforms/noop` Python hooks | 新实现 | 离线端到端测试 |
+
+### M2 复用候选
+
+| 目标 | 来源 | 必要改造 |
+|---|---|---|
+| `core/policy.py` 限流 | union-search `channels/no_api/request_state.py` | 存储路径注入；429/captcha cooldown 映射 `RATE_LIMITED` / `PLATFORM_BLOCKED` |
+| no-API 平台族 | union-search `channels/no_api/**` | 每个平台一个目录 + fixtures；去掉 import 时 `.env` |
+| URL→Markdown | union-search `url_to_markdown/engines/*` | 懒加载可选依赖；Defuddle/Node 失败时降级 Jina |
+| HTML/regex 通用解析 | union-search 各平台解析器 | 优先放进平台 `parse.py`；通用链只保留无依赖的 regex |
+
+### 明确不复用
+
+- `union_search.py` 的 `PLATFORM_MODULES` 静态表、`if/elif` 单平台分发、
+  `sys.path.insert` 引导。
+- 任何 `shell=True` 的调用（包括 `exa_mcp.py` 的 `mcporter` 包装）。
+- `scripts/channels/ai_tools/native_search/`：上游 `THIRD_PARTY.md` 标注为
+  无可验证公开仓库/许可证的迁移代码，未经 provenance review 不引入。
+- `scripts/channels/kimi/kimi_search.py`：它是 Moonshot 直连 API，不是
+  kimi-webbridge daemon；daemon 适配器按外部契约实现。
+- 图片搜索、媒体下载、`pyimagedl` / `yt-dlp` 等不在当前范围。
+
+### 复用时的硬约束
+
+- 不引入 import 时副作用：`.env`、`logging.basicConfig`、全局 SQLite 状态、
+  模块级 session、自动创建日志目录。
+- 重依赖（`lxml`、`curl_cffi`、`firecrawl-py`、Node/Defuddle）必须懒加载，
+  `core/*` 保持仅依赖 `pyyaml` + `jsonschema`。
+- 复用文件保留上游版权；新增/修改记录在 `THIRD_PARTY.md`。
+
+---
+
+## 13. 迁移计划
+
+### M0 — 契约层（无行为变化）
+
+**状态：已完成（2026-10-25）**。`python -m pytest -q` 59 项通过；
+`platforms` 与 `explain` 已可用。本文档 M0 交付物全部落地。
+
+**交付物**
+
+- `core/schema/platform.schema.json`、`tool.schema.json`、`routing.schema.json`
+- `core/registry.py`：目录扫描、YAML 加载、Schema 校验、依赖检查
+- `core/router.py`：优先级解析、`first_success` / `aggregate`
+- `core/policy.py`：超时、输出上限、URL 安全、错误分类
+- `adapters/base.py`：`Adapter` / `ToolCall` / `RawResult`
+- `platforms/noop/`：最小示例平台
+- 契约测试：schema、registry、router
+
+**验收**
+
+- `agent-reach platforms` 能列出 `noop` 及其动作/优先级。
+- 删除 `noop` 目录后命令仍正常，列表不再包含它。
+- 现有 Agent-Reach 测试中与 dispatch/envelope 相关的契约全部通过。
+
+**验收结果**
+
+- `python -m agent_reach.cli platforms` 输出 `noop`（search/read）。
+- 删除目录的下线能力由 `tests/test_registry.py::test_deleting_directory_removes_platform`
+  覆盖；manifest 错误、目录名不匹配、依赖缺失也会被隔离并报告。
+- envelope 由 `tests/test_schema.py` 按 JSON Schema 校验。
+
+### M1 — 适配器与管道
+
+**状态：已完成（2026-10-25）**。`python -m pytest -q` 119 项通过；
+`search` / `read` 已可用，并用真实 Exa/Jina 做了验收。
+
+**交付物**
+
+- `core/context.py`：有界子进程、HTTP、secret
+- `adapters/http.py`、`cli.py`、`opencli.py`、`builtin.py`
+- `core/pipeline.py`：search → parse → read、来源降级、attempts、聚合
+- `core/normalize.py`、`core/template.py`
+- `parse/generic.py`：JSON/YAML/OpenCLI/text + 平台自定义 `parse.py`
+- `platforms/web/`：Exa search + Jina/Exa read
+- `platforms/noop/`：离线 Python hooks，用于端到端测试
+
+HTML/regex 通用解析器暂缓：当前不引入 `lxml`/`bs4`，站点 HTML 交给平台
+自己的 `parse.py`；通用链对这两个名字会给出明确错误。
+
+**验收**
+
+- `agent-reach web search` 与 `read` 完全走 manifest。
+- 错误码、超时、`meta.attempts` 与旧实现一致。
+- OpenCLI 的 YAML 错误块能被正确识别并映射。
+
+**验收结果**
+
+- `python -m agent_reach.cli search "yt-dlp github repository" --platform web --limit 2`
+  返回 Exa 结果，`backend: exa`。
+- `python -m agent_reach.cli read https://example.com --platform web`
+  返回 Jina 正文，`backend: jina`。
+- `tests/test_web_platform.py` 覆盖 Exa SSE、Jina header、antibot、Jina→Exa
+  回退；`tests/test_adapters.py` 覆盖 OpenCLI YAML 错误映射。
+- `tests/test_pipeline.py` 覆盖 source/平台降级、终态错误、聚合去重、
+  `per_platform_limit` 和每平台默认值。
+
+### M2 — 平台批次一
+
+**交付物**
+
+- `platforms/github/`、`v2ex/`、`bilibili/`
+- 每个平台：`platform.yaml` + fixtures + 解析测试 + 契约测试
+- 登录态/公共网页兜底验证
+
+**验收**
+
+- 三个平台的 `search/read` 与旧 channel 结果结构一致。
+- 删除任一平台目录，其他平台不受影响。
+- `agent-reach doctor` 能报告工具与登录态。
+
+### M3 — 有状态工具与按需抓取
+
+**交付物**
+
+- `adapters/daemon.py`：kimi-webbridge（健康检查、session、cursor、分页）
+- `--enrich N`：并发抓取、失败隔离、URL 复检
+- `platforms/web` 或相关平台接入 kimi 作为来源
+
+**验收**
+
+- daemon 未启动 / 扩展未连接时返回明确错误码。
+- `snapshot` 分页能取完或按 `max_chars` 截断。
+- `--enrich 3` 在部分失败时仍返回搜索结果。
+
+### M4 — 全量迁移与插件
+
+**交付物**
+
+- 剩余平台迁成目录包；删除静态 registry 与旧 channel 类
+- `~/.agent-reach/plugins/` 发现 + `agent-reach plugin validate`
+- `agent-reach explain`：解释路由与来源
+- SKILL.md 由 registry 自动生成
+
+**验收**
+
+- 第三方平台不改核心即可加入。
+- `agent-reach platforms` 列出所有能力与优先级。
+- 删除一个平台包后，能力表自动更新。
+
+### M5 — 加固与发布
+
+**交付物**
+
+- 每个平台的 fixture 解析测试
+- 适配器单测（本地 fake binary / fake HTTP server）
+- `agent-reach check` live 回归
+- 文档、迁移指南、发布验收
+
+**验收**
+
+- 无网络环境下测试全绿。
+- live check 覆盖 `search/read` 主路径。
+- 回归对比旧版：结果字段、错误码、退出码一致。
+
+---
+
+## 14. 测试策略
+
+| 层级 | 内容 |
+|---|---|
+| Schema | 每个 `platform.yaml` / `tool.yaml` / `routing.yaml` 通过 JSON Schema |
+| 平台契约 | 目录存在、三项能力可解析、actions/params 合法、依赖可满足 |
+| 解析器 | fixture 输入 → 期望 Item；每个来源至少一个样本 |
+| 适配器 | fake 命令 / 本地 HTTP server；超时、非零退出、超大输出、YAML 错误 |
+| 路由 | 显式平台、intent、优先级、禁用平台、聚合去重 |
+| 删除 | 删除平台目录后 registry 仍可加载 |
+| live | 显式开启；`agent-reach check --search` |
+
+测试隔离沿用现有做法：临时 HOME、禁用真实网络与 OpenCLI 调用。
+
+---
+
+## 15. 风险与缓解
+
+| 风险 | 缓解 |
+|---|---|
+| YAML 过度抽象，复杂平台写不出来 | 声明式优先 + 平台目录内 Python 扩展 |
+| 解析器随站点改版失效 | fixture 测试 + live check + 失败降级 |
+| 各平台重复实现工具调用 | 共享 adapters；平台只声明 `adapter/tool/args` |
+| 有状态工具（kimi/opencli）与一次性模型不匹配 | `daemon` 适配器支持 session/cursor；核心管道保持无状态 |
+| 子进程输出无上限 | 给 `run_cmd` 增加 `max_output_bytes` |
+| 插件执行任意代码 | 纯清单默认安全；代码插件显式 `--trust` + 能力声明 |
+| 聚合模式放大限流/反爬 | 默认 `first_success`；聚合限制 top K 与并发 |
+| 迁移期间两套模型并存 | `LegacyChannelAdapter` + 平台级开关，逐个切换 |
+
+---
+
+## 16. 待确认事项
+
+1. 落地仓库最终名称：`services/reach-platforms/` 还是其他。
+2. 是否直接复制 Agent-Reach 代码作为起点（保留 MIT 声明），还是 clean-room 只借鉴架构。
+3. 第三方插件是否允许发布为 pip 包（entry points），首版是否只支持本地目录。
+4. 平台包是否需要独立版本号（`platform.yaml: version`）。
+5. `web` 是否作为不可删除的核心兜底。
+
+---
+
+## 17. 当前代码映射（迁移参考）
+
+| 现有位置 | 迁移后 |
+|---|---|
+| `channels/<platform>.py` | `platforms/<id>/platform.yaml` + 可选 py |
+| `channels/base.py:30-49` `Action.backends` | `platform.yaml` 的 `sources[].priority` |
+| `channels/__init__.py:24-39` 静态列表 | `core/registry.py` 目录扫描 |
+| `runtime/dispatch.py:200` `run_action` | `core/pipeline.py` + `core/router.py` |
+| `runtime/tools.py:52-68` `TOOLS` | `agent_reach/tools/*.yaml` + `adapters/*` |
+| `runtime/manage.py:954` `CONFIG_KEYS` | `core/config.py` 分层配置 |
+| `runtime/public_web.py:56-64` | `platforms/web/` 的公共来源 + 平台 `public_web.scopes` |
+| `backends/opencli.py:59` | `adapters/opencli.py` |
+| `channels/_opencli_site.py:11` | 平台 manifest 的 `adapter: opencli` 声明 |
+| `runtime/run.py:30` `run_cmd` | `adapters/cli.py` + `policy.py` 输出上限 |
+| `runtime/run.py:111` `http_request` | `adapters/http.py` |
+| `runtime/result.py:85,116` | `core/result.py`（原样保留） |
+| `config.py:155` 扁平配置 | `core/config.py` 分层配置 |
+| `~/.claude/skills/kimi-webbridge/SKILL.md` | `adapters/daemon.py` |
+
+---
+
+## 18. 下一步
+
+M0（契约层）与 M1（适配器、管道、`web` 平台、CLI `search`/`read`）均已完成。
+M2 按平台批次迁移真实能力，避免大爆炸式重写：
+
+- `github`、`v2ex`、`bilibili` 平台目录与 manifest 测试
+- 限流、冷却与 `RATE_LIMITED` 的统一策略
+- daemon 适配器（kimi-webbridge，仅 loopback）
+- `--enrich N` 搜索后按需补正文
+- 第三方插件信任模型与安全加固

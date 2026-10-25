@@ -1,0 +1,40 @@
+id: noop
+description: Minimal built-in platform used by M0 contract tests.
+version: 1
+level: experimental
+priority: 999
+domains:
+  - example.com
+public_web: false
+
+actions:
+  search:
+    params:
+      query:
+        type: str
+        required: true
+        description: Text to search for.
+      limit:
+        type: int
+        default: 3
+        description: Maximum number of items.
+    sources:
+      - adapter: builtin
+        name: noop
+        call: noop_search
+        parse:
+          - json_items
+        priority: 10
+  read:
+    params:
+      target:
+        type: str
+        required: true
+        description: URL or id to read.
+    sources:
+      - adapter: builtin
+        name: noop
+        call: noop_read
+        parse:
+          - json
+        priority: 10
