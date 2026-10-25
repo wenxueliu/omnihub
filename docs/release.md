@@ -47,7 +47,7 @@ python -m agent_reach.cli doctor --text
 | `v2ex` | search, read | builtin, http | — |
 | `reddit` | search, read | http | — |
 | `youtube` | search, read | http | — |
-| `noop` | search | builtin | —（离线示例） |
+| `noop` | search, read | builtin | —（离线示例） |
 
 `kimi-webbridge v2.0.23` 在本机运行，`web` / `reddit` / `youtube` 的
 daemon 来源探测为 `ok`，但仍按可选来源处理。
